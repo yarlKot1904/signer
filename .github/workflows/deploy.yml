@@ -19,28 +19,3 @@ jobs:
 
     - name: Run tests
       run: go test ./... || true
-
-    - name: Build Docker image
-      run: |
-        docker build -t ghcr.io/${{ github.repository }}/gateway:${{ github.sha }} services/gateway
-
-    - name: Login to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.CR_PAT }}
-
-    - name: Push image
-      run: docker push ghcr.io/${{ github.repository }}/gateway:${{ github.sha }}
-
-    - name: Install kubectl
-      uses: azure/setup-kubectl@v3
-
-    - name: Setup kubeconfig
-      run: |
-        mkdir ~/.kube
-        echo "${{ secrets.KUBECONFIG_BASE64 }}" | base64 -d > ~/.kube/config
-
-    - name: Deploy to k3s
-      run: kubectl apply -f infra/k8s
