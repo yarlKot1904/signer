@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: signer-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+spec:
+  rules:
+  - host: signer.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: uploader-svc, port: {number: 80}}}
+  - host: dl.signer.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend: {service: {name: downloader-svc, port: {number: 80}}}
