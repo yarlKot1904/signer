@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: uploader, namespace: default}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: uploader}}
+  template:
+    metadata: {labels: {app: uploader}}
+    spec:
+      containers:
+      - name: uploader
+        # !!! ЗАМЕНИ НИЖЕ НА СВОЙ ПУТЬ !!!
+        image: ghcr.io/yarlkot/signer/uploader:latest 
+        imagePullPolicy: Always
+        ports: [{containerPort: 8080}]
+        env:
+        - {name: MINIO_ENDPOINT, value: "http://minio:9000"}
+        - {name: MINIO_ID, value: "minioadmin"}
+        - {name: MINIO_SECRET, value: "minioadmin"}
+        - {name: MINIO_BUCKET, value: "docs-storage"}
+        - {name: REDIS_ADDR, value: "redis:6379"}
+        - {name: HTTP_PORT, value: "8080"}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: uploader-svc, namespace: default}
+spec: {ports: [{port: 80, targetPort: 8080}], selector: {app: uploader}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: downloader, namespace: default}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: downloader}}
+  template:
+    metadata: {labels: {app: downloader}}
+    spec:
+      containers:
+      - name: downloader
+        image: ghcr.io/yarlkot1904/signer/downloader:latest
+        imagePullPolicy: Always
+        ports: [{containerPort: 8080}]
+        env:
+        - {name: MINIO_ENDPOINT, value: "http://minio:9000"}
+        - {name: MINIO_ID, value: "minioadmin"}
+        - {name: MINIO_SECRET, value: "minioadmin"}
+        - {name: REDIS_ADDR, value: "redis:6379"}
+        - {name: HTTP_PORT, value: "8080"}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: downloader-svc, namespace: default}
+spec: {ports: [{port: 80, targetPort: 8080}], selector: {app: downloader}}

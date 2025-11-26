@@ -1,21 +1,43 @@
-name: CI/CD to k3s
+name: Build and Push to GHCR
 
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  deploy:
+  build-and-push:
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read
+      packages: write
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: "1.22"
+      - name: Log in to Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Run tests
-      run: go test ./... || true
+      - name: Build and push Uploader
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./deploy/docker/uploader.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/uploader:latest
+
+      - name: Build and push Downloader
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./deploy/docker/downloader.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/downloader:latest
