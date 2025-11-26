@@ -9,8 +9,7 @@ spec:
     spec:
       containers:
       - name: uploader
-        # !!! ЗАМЕНИ НИЖЕ НА СВОЙ ПУТЬ !!!
-        image: ghcr.io/yarlkot/signer/uploader:latest 
+        image: ghcr.io/yarlkot1904/signer/uploader:latest 
         imagePullPolicy: Always
         ports: [{containerPort: 8080}]
         env:
