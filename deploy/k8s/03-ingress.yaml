@@ -10,12 +10,24 @@ spec:
   - host: signer.local
     http:
       paths:
+      - path: /download
+        pathType: Prefix
+        backend: 
+          service: 
+            name: downloader-svc
+            port: 
+              number: 80
+      - path: /view
+        pathType: Prefix
+        backend: 
+          service: 
+            name: downloader-svc
+            port: 
+              number: 80
       - path: /
         pathType: Prefix
-        backend: {service: {name: uploader-svc, port: {number: 80}}}
-  - host: dl.signer.local
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend: {service: {name: downloader-svc, port: {number: 80}}}
+        backend: 
+          service: 
+            name: uploader-svc
+            port: 
+              number: 80

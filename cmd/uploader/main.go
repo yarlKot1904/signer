@@ -97,6 +97,6 @@ func handleUploadComplete(event handler.HookEvent, rdb *redis.Client) {
 	}
 
 	log.Printf("File: %s (%s)", filename, email)
-	log.Printf("Download: http://localhost:8081/download/%s", downloadToken)
-	log.Printf("View: http://localhost:8081/view/%s", downloadToken)
+	log.Printf("Download: http://signer.local/download/%s", downloadToken)
+	log.Printf("View: http://signer.local/view/%s", downloadToken)
 }
