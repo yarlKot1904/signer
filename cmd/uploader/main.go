@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/yarlKot1904/signer/internal/config"
 	"github.com/yarlKot1904/signer/internal/infra"
 
@@ -57,7 +59,7 @@ func main() {
 	go func() {
 		for {
 			event := <-tusHandler.CompleteUploads
-			handleUploadComplete(event, redisClient)
+			handleUploadComplete(event, s3Client, cfg.MinioBucket, redisClient)
 		}
 	}()
 
@@ -65,32 +67,45 @@ func main() {
 
 	http.Handle("/", http.FileServer(http.Dir("./static")))
 
-	log.Printf("🚀 Uploader service started on :%s", cfg.HTTPPort)
+	log.Printf("Uploader service started on :%s", cfg.HTTPPort)
 	if err := http.ListenAndServe(":"+cfg.HTTPPort, nil); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func handleUploadComplete(event handler.HookEvent, rdb *redis.Client) {
+func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket string, rdb *redis.Client) {
 	email := event.Upload.MetaData["userEmail"]
 	filename := event.Upload.MetaData["filename"]
 	if filename == "" {
 		filename = "document.pdf"
+	}
+	now := time.Now()
+	oldKey := event.Upload.Storage["Key"]
+	newKey := fmt.Sprintf("%d/%02d/%s", now.Year(), int(now.Month()), oldKey)
+
+	ctx := context.Background()
+	err := infra.MoveObject(ctx, s3Client, bucket, oldKey, newKey)
+	finalKey := oldKey
+	if err != nil {
+		log.Printf("Error moving object in S3: %v", err)
+		return
+	} else {
+		finalKey = newKey
+		log.Printf("Moved object in S3 from %s to %s", oldKey, newKey)
 	}
 
 	downloadToken := uuid.New().String()
 
 	meta := FileMeta{
 		OriginalName: filename,
-		S3Key:        event.Upload.Storage["Key"],
+		S3Key:        finalKey,
 		MimeType:     event.Upload.MetaData["filetype"],
 		OwnerEmail:   email,
 	}
 
 	data, _ := json.Marshal(meta)
 
-	ctx := context.Background()
-	err := rdb.Set(ctx, "doc:"+downloadToken, data, 24*time.Hour).Err()
+	err = rdb.Set(ctx, "doc:"+downloadToken, data, 24*time.Hour).Err()
 	if err != nil {
 		log.Printf("Error saving to Redis: %v", err)
 		return
