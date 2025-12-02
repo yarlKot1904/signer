@@ -93,6 +93,13 @@ func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket s
 		finalKey = newKey
 		log.Printf("Moved object in S3 from %s to %s", oldKey, newKey)
 	}
+	oldInfoKey := oldKey + ".info"
+	newInfoKey := newKey + ".info"
+
+	errInfo := infra.MoveObject(ctx, s3Client, bucket, oldInfoKey, newInfoKey)
+	if errInfo != nil {
+		log.Printf("Warning: could not move .info file: %v", errInfo)
+	}
 
 	downloadToken := uuid.New().String()
 
