@@ -2,6 +2,8 @@ package infra
 
 import (
 	"context"
+	"fmt"
+	"net/url"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -32,4 +34,28 @@ func NewS3Client(ctx context.Context, endpoint, id, secret, region string) (*s3.
 	})
 
 	return client, nil
+}
+
+func MoveObject(ctx context.Context, client *s3.Client, bucket, oldKey, newKey string) error {
+	src := fmt.Sprintf("%s/%s", bucket, oldKey)
+	encodedSrc := url.PathEscape(src)
+
+	_, err := client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(bucket),
+		CopySource: aws.String(encodedSrc),
+		Key:        aws.String(newKey),
+	})
+	if err != nil {
+		return fmt.Errorf("copy failed: %w", err)
+	}
+
+	_, err = client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(oldKey),
+	})
+	if err != nil {
+		return fmt.Errorf("delete failed: %w", err)
+	}
+
+	return nil
 }
