@@ -3,9 +3,9 @@ package config
 import "github.com/kelseyhightower/envconfig"
 
 type Config struct {
-	MinioEndpoint string `envconfig:"MINIO_ENDPOINT" required:"true"`
-	MinioID       string `envconfig:"MINIO_ID" required:"true"`
-	MinioSecret   string `envconfig:"MINIO_SECRET" required:"true"`
+	MinioEndpoint string `envconfig:"MINIO_ENDPOINT"`
+	MinioID       string `envconfig:"MINIO_ID"`
+	MinioSecret   string `envconfig:"MINIO_SECRET"`
 	MinioBucket   string `envconfig:"MINIO_BUCKET" default:"docs-storage"`
 
 	MinioRegion string `envconfig:"MINIO_REGION" default:"us-east-1"`
