@@ -46,7 +46,7 @@ func main() {
 	ch := pubsub.Channel()
 
 	for msg := range ch {
-		log.Printf("📨 Received task: %s", msg.Payload)
+		log.Printf("Received task: %s", msg.Payload)
 
 		var task TaskMessage
 		if err := json.Unmarshal([]byte(msg.Payload), &task); err != nil {
