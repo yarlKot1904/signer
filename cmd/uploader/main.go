@@ -24,6 +24,10 @@ type FileMeta struct {
 	MimeType     string `json:"mime_type"`
 	OwnerEmail   string `json:"owner_email"`
 }
+type TaskMessage struct {
+	Token string `json:"token"`
+	Email string `json:"email"`
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -116,6 +120,18 @@ func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket s
 	if err != nil {
 		log.Printf("Error saving to Redis: %v", err)
 		return
+	}
+	task := TaskMessage{
+		Token: downloadToken,
+		Email: email,
+	}
+	taskJSON, _ := json.Marshal(task)
+
+	err = rdb.Publish(context.Background(), "generation-tasks", taskJSON).Err()
+	if err != nil {
+		log.Printf("Failed to publish task: %v", err)
+	} else {
+		log.Printf("Published generation task for: %s", downloadToken)
 	}
 
 	log.Printf("File: %s (%s)", filename, email)

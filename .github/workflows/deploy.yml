@@ -44,3 +44,10 @@ jobs:
           file: ./deploy/docker/downloader.Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/downloader:latest
+      - name: Build and push Signer
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./deploy/docker/signer.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/signer:latest
