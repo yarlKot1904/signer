@@ -137,5 +137,5 @@ func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket s
 	log.Printf("File: %s (%s)", filename, email)
 	log.Printf("Download: http://signer.local/download/%s", downloadToken)
 	log.Printf("View: http://signer.local/view/%s", downloadToken)
-	log.Printf("Sign: http://signer.local/sign?token=%s", downloadToken)
+	log.Printf("Sign: http://signer.local/sign.html?token=%s", downloadToken)
 }
