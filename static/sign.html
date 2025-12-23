@@ -4,156 +4,172 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Подписание документа | Signer</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    
     <style>
-        body { overflow: hidden; }
-        #pdf-viewer { height: 100vh; }
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            font-family: sans-serif;
+            overflow: hidden;
+        }
+
+        .pdf-viewer {
+            flex: 1;
+            background-color: #525659;
+            position: relative;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+        }
+
+        .message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+        }
+
+        .sidebar {
+            width: 350px;
+            background: white;
+            border-left: 1px solid #ccc;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            box-shadow: -5px 0 15px rgba(0,0,0,0.05);
+        }
+
+        h2 { margin-top: 0; color: #333; }
+        
+        label { display: block; margin-bottom: 8px; color: #666; font-size: 14px; }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+            font-size: 14px;
+            text-align: center;
+        }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
     </style>
 </head>
 <body class="bg-gray-100 flex flex-col md:flex-row h-screen">
 
-    <div class="w-full md:w-2/3 h-full bg-gray-800 flex items-center justify-center relative">
-        <div id="loader" class="absolute text-white text-xl">
-            <i class="fas fa-spinner fa-spin mr-2"></i> Загрузка документа...
-        </div>
-        
-        <iframe id="pdf-frame" class="w-full h-full border-none hidden" type="application/pdf"></iframe>
-        
-        <div id="error-msg" class="hidden text-red-400 text-center px-4">
-            <i class="fas fa-exclamation-circle text-4xl mb-2"></i><br>
-            Не удалось загрузить документ.<br>Возможно, ссылка устарела.
-        </div>
+    <div class="pdf-viewer">
+        <div id="loader" class="message">Загрузка документа...</div>
+        <iframe id="frame"></iframe>
     </div>
 
-    <div class="w-full md:w-1/3 h-full bg-white shadow-xl z-10 flex flex-col">
+    <div class="sidebar">
+        <h2>Подписание</h2>
         
-        <div class="p-8 border-b">
-            <h1 class="text-2xl font-bold text-gray-800 mb-2">
-                <i class="fas fa-file-signature text-blue-600 mr-2"></i>Подписание
-            </h1>
-        </div>
+        <label for="code">Код из SMS / Email:</label>
+        <input type="password" id="code" placeholder="Введите код">
 
-        <div class="flex-grow p-8 flex flex-col justify-center">
-            
-            <div class="mb-6">
-                <label class="block text-gray-700 text-sm font-bold mb-2" for="secret-code">
-                    Код подтверждения
-                </label>
-                <div class="relative">
-                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">
-                        <i class="fas fa-key"></i>
-                    </span>
-                    <input class="shadow appearance-none border rounded w-full py-3 px-3 pl-10 text-gray-700 leading-tight focus:outline-none focus:shadow-outline focus:border-blue-500 transition" 
-                           id="secret-code" 
-                           type="password" 
-                           placeholder="Введите код">
-                </div>
-            </div>
-
-            <div id="status-box" class="hidden mb-4 p-4 rounded text-sm"></div>
-
-            <button onclick="signDocument()" 
-                    id="sign-btn"
-                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded focus:outline-none focus:shadow-outline transition duration-200 flex justify-center items-center">
-                <span>Подписать</span>
-            </button>
-        </div>
+        <button id="btn" onclick="sign()">Подписать документ</button>
+        
+        <div id="status"></div>
     </div>
 
     <script>
         const params = new URLSearchParams(window.location.search);
         const token = params.get('token');
 
-        const frame = document.getElementById('pdf-frame');
+        const frame = document.getElementById('frame');
         const loader = document.getElementById('loader');
-        const errorMsg = document.getElementById('error-msg');
-        const signBtn = document.getElementById('sign-btn');
-        const statusBox = document.getElementById('status-box');
+        const statusBox = document.getElementById('status');
 
         if (token) {
-            const downloadUrl = `/download/${token}`;
-            
-            frame.src = downloadUrl;
+            frame.src = `/view/${token}`;
             
             frame.onload = () => {
-                loader.classList.add('hidden');
-                frame.classList.remove('hidden');
-            };
-
-            frame.onerror = () => {
-                loader.classList.add('hidden');
-                errorMsg.classList.remove('hidden');
+                loader.style.display = 'none';
             };
         } else {
-            loader.classList.add('hidden');
-            errorMsg.innerHTML = "Ошибка: Токен документа не найден в ссылке.";
-            errorMsg.classList.remove('hidden');
-            signBtn.disabled = true;
-            signBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            loader.innerText = "Ошибка: Ссылка не содержит токен";
+            btn.disabled = true;
         }
 
-        async function signDocument() {
-            const code = document.getElementById('secret-code').value;
-            
+        async function sign() {
+            const code = document.getElementById('code').value;
             if (!code) {
-                showStatus('Введите код подтверждения!', 'error');
+                showStatus('Введите код!', 'error');
                 return;
             }
 
-            signBtn.disabled = true;
-            signBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Обработка...';
+            btn.disabled = true;
+            btn.innerText = 'Обработка...';
             showStatus(null);
 
             try {
-                const response = await fetch('/api/sign', {
+                const res = await fetch('/api/sign', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        token: token,
-                        password: code
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token, password: code })
                 });
 
-                if (response.ok) {
-                    showStatus('Документ успешно подписан! Вы можете закрыть страницу.', 'success');
-                    signBtn.innerHTML = '<i class="fas fa-check mr-2"></i> Подписано';
-                    signBtn.classList.replace('bg-blue-600', 'bg-green-600');
-                    signBtn.classList.replace('hover:bg-blue-700', 'hover:bg-green-700');
+                if (res.ok) {
+                    showStatus('Успешно подписано!', 'success');
+                    btn.innerText = 'Готово';
+                    btn.style.backgroundColor = '#28a745';
                 } else {
-                    const data = await response.json();
-                    showStatus(data.error || 'Ошибка проверки кода. Попробуйте еще раз.', 'error');
-                    resetBtn();
+                    const data = await res.json();
+                    showStatus(data.error || 'Ошибка проверки кода', 'error');
+                    btn.disabled = false;
+                    btn.innerText = 'Подписать документ';
                 }
             } catch (e) {
-                console.error(e);
-                showStatus('Ошибка сети. Проверьте соединение.', 'error');
-                resetBtn();
+                showStatus('Ошибка сети', 'error');
+                btn.disabled = false;
+                btn.innerText = 'Подписать документ';
             }
         }
 
-        function showStatus(msg, type) {
-            if (!msg) {
-                statusBox.classList.add('hidden');
+        function showStatus(text, type) {
+            if (!text) {
+                statusBox.style.display = 'none';
                 return;
             }
-            statusBox.classList.remove('hidden', 'bg-red-100', 'text-red-700', 'bg-green-100', 'text-green-700');
-            
-            if (type === 'error') {
-                statusBox.classList.add('bg-red-100', 'text-red-700');
-            } else {
-                statusBox.classList.add('bg-green-100', 'text-green-700');
-            }
-            statusBox.innerText = msg;
-        }
-
-        function resetBtn() {
-            signBtn.disabled = false;
-            signBtn.innerHTML = '<span>Подписать документ</span>';
+            statusBox.innerText = text;
+            statusBox.className = type;
+            statusBox.style.display = 'block';
         }
     </script>
+
 </body>
 </html>
