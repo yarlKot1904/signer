@@ -16,6 +16,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/tus/tusd/v2/pkg/handler"
 	"github.com/tus/tusd/v2/pkg/s3store"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type FileMeta struct {
@@ -27,6 +29,7 @@ type FileMeta struct {
 type TaskMessage struct {
 	Token string `json:"token"`
 	Email string `json:"email"`
+	S3Key string `json:"s3_key"`
 }
 
 func main() {
@@ -51,6 +54,30 @@ func main() {
 	composer := handler.NewStoreComposer()
 	store.UseIn(composer)
 
+	rabbitConn, err := amqp.Dial(cfg.RabbitURL)
+	if err != nil {
+		log.Fatal("RabbitMQ connect failed:", err)
+	}
+	defer rabbitConn.Close()
+
+	rabbitCh, err := rabbitConn.Channel()
+	if err != nil {
+		log.Fatal("RabbitMQ channel failed:", err)
+	}
+	defer rabbitCh.Close()
+
+	q, err := rabbitCh.QueueDeclare(
+		"signer.tasks",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	tusHandler, err := handler.NewHandler(handler.Config{
 		BasePath:              "/files/",
 		StoreComposer:         composer,
@@ -63,7 +90,7 @@ func main() {
 	go func() {
 		for {
 			event := <-tusHandler.CompleteUploads
-			handleUploadComplete(event, s3Client, cfg.MinioBucket, redisClient)
+			handleUploadComplete(event, s3Client, cfg.MinioBucket, redisClient, rabbitCh, q.Name)
 		}
 	}()
 
@@ -77,7 +104,7 @@ func main() {
 	}
 }
 
-func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket string, rdb *redis.Client) {
+func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket string, rdb *redis.Client, rabbitCh *amqp.Channel, queueName string) {
 	email := event.Upload.MetaData["userEmail"]
 	filename := event.Upload.MetaData["filename"]
 	if filename == "" {
@@ -124,14 +151,24 @@ func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket s
 	task := TaskMessage{
 		Token: downloadToken,
 		Email: email,
+		S3Key: finalKey,
 	}
 	taskJSON, _ := json.Marshal(task)
 
-	err = rdb.Publish(context.Background(), "generation-tasks", taskJSON).Err()
+	err = rabbitCh.PublishWithContext(ctx,
+		"",
+		queueName,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        taskJSON,
+		})
+
 	if err != nil {
 		log.Printf("Failed to publish task: %v", err)
 	} else {
-		log.Printf("Published generation task for: %s", downloadToken)
+		log.Printf("Published task to RabbitMQ for: %s", downloadToken)
 	}
 
 	log.Printf("File: %s (%s)", filename, email)

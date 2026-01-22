@@ -3,22 +3,31 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
+	"fmt"
 	"log"
-	"time"
+	"math/big"
+	"net/http"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/yarlKot1904/signer/internal/config"
-	"github.com/yarlKot1904/signer/internal/infra"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type TaskMessage struct {
 	Token string `json:"token"`
 	Email string `json:"email"`
+	S3Key string `json:"s3_key"`
 }
+
+type SignRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
+var db *pgxpool.Pool
 
 func main() {
 	cfg, err := config.Load()
@@ -26,65 +35,169 @@ func main() {
 		log.Fatal(err)
 	}
 
-	rdb, err := infra.NewRedisClient(cfg.RedisAddr)
+	ctx := context.Background()
+	db, err = pgxpool.New(ctx, cfg.DBDSN)
+	if err != nil {
+		log.Fatal("Unable to connect to database:", err)
+	}
+	defer db.Close()
+
+	initDB(ctx, db)
+
+	rabbitConn, err := amqp.Dial(cfg.RabbitURL)
+	if err != nil {
+		log.Fatal("RabbitMQ connect failed:", err)
+	}
+	defer rabbitConn.Close()
+
+	rabbitCh, err := rabbitConn.Channel()
+	if err != nil {
+		log.Fatal("RabbitMQ channel failed:", err)
+	}
+	defer rabbitCh.Close()
+
+	q, err := rabbitCh.QueueDeclare(
+		"signer.tasks",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
-
-	topic := "generation-tasks"
-	pubsub := rdb.Subscribe(ctx, topic)
-	defer pubsub.Close()
-
-	if _, err := pubsub.Receive(ctx); err != nil {
-		log.Fatal("Subscribe error:", err)
+	msgs, err := rabbitCh.Consume(
+		q.Name,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	log.Printf("Signer service started. Listening on channel: %s", topic)
-
-	ch := pubsub.Channel()
-
-	for msg := range ch {
-		log.Printf("Received task: %s", msg.Payload)
-
-		var task TaskMessage
-		if err := json.Unmarshal([]byte(msg.Payload), &task); err != nil {
-			log.Printf("Bad JSON: %v", err)
-			continue
+	go func() {
+		log.Printf("Signer Worker started. Waiting for messages.")
+		for d := range msgs {
+			processTask(ctx, d.Body)
 		}
+	}()
 
-		err := generateAndSaveKeys(ctx, rdb, task.Token)
-		if err != nil {
-			log.Fatalf("Key generation failed: %v", err)
-		} else {
-			log.Printf("Keys generated for session: %s", task.Token)
-		}
+	http.HandleFunc("/api/sign", handleSignRequest)
+
+	log.Printf("Signer API started on :%s", cfg.HTTPPort)
+	if err := http.ListenAndServe(":"+cfg.HTTPPort, nil); err != nil {
+		log.Fatal(err)
 	}
 }
 
-func generateAndSaveKeys(ctx context.Context, rdb *redis.Client, token string) error {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+func initDB(ctx context.Context, db *pgxpool.Pool) {
+	query := `
+	CREATE TABLE IF NOT EXISTS signing_sessions (
+		token TEXT PRIMARY KEY,
+		email TEXT NOT NULL,
+		code_hash TEXT NOT NULL,
+		s3_key TEXT NOT NULL,
+		is_used BOOLEAN DEFAULT FALSE,
+		created_at TIMESTAMP DEFAULT NOW()
+	);
+	`
+	_, err := db.Exec(ctx, query)
 	if err != nil {
-		return err
+		log.Fatalf("Migration failed: %v", err)
+	}
+}
+
+func processTask(ctx context.Context, body []byte) {
+	var task TaskMessage
+	if err := json.Unmarshal(body, &task); err != nil {
+		log.Printf("Bad JSON: %v", err)
+		return
 	}
 
-	privBytes := x509.MarshalPKCS1PrivateKey(privateKey)
-	privPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: privBytes,
-	})
+	code, err := generateCode()
+	if err != nil {
+		log.Printf("Random error: %v", err)
+		return
+	}
 
-	pubBytes := x509.MarshalPKCS1PublicKey(&privateKey.PublicKey)
-	pubPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PUBLIC KEY",
-		Bytes: pubBytes,
-	})
+	hash, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("Hash error: %v", err)
+		return
+	}
 
-	pipe := rdb.Pipeline()
-	pipe.Set(ctx, "session:"+token+":private", string(privPEM), 24*time.Hour)
-	pipe.Set(ctx, "session:"+token+":public", string(pubPEM), 24*time.Hour)
+	query := `
+		INSERT INTO signing_sessions (token, email, code_hash, s3_key) 
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (token) DO NOTHING
+	`
+	_, err = db.Exec(ctx, query, task.Token, task.Email, string(hash), task.S3Key)
+	if err != nil {
+		log.Printf("DB Error: %v", err)
+		return
+	}
 
-	_, err = pipe.Exec(ctx)
-	return err
+	log.Printf("==========================================")
+	log.Printf("NEW TASK for %s", task.Email)
+	log.Printf("OTP CODE: %s", code)
+	log.Printf("TOKEN: %s", task.Token)
+	log.Printf("==========================================")
+}
+
+func handleSignRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req SignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	var hash string
+	var isUsed bool
+
+	err := db.QueryRow(context.Background(),
+		"SELECT code_hash, is_used FROM signing_sessions WHERE token=$1", req.Token).Scan(&hash, &isUsed)
+
+	if err == pgx.ErrNoRows {
+		http.Error(w, `{"error": "Session not found or expired"}`, http.StatusNotFound)
+		return
+	} else if err != nil {
+		log.Printf("DB Query Error: %v", err)
+		http.Error(w, `{"error": "Internal error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if isUsed {
+		http.Error(w, `{"error": "Code already used"}`, http.StatusForbidden)
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password))
+	if err != nil {
+		http.Error(w, `{"error": "Invalid code"}`, http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status": "success", "message": "Code valid. Signing logic pending..."}`))
+}
+
+func generateCode() (string, error) {
+	max := big.NewInt(1000000)
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n.Int64()), nil
 }

@@ -12,6 +12,9 @@ type Config struct {
 
 	RedisAddr string `envconfig:"REDIS_ADDR" required:"true"`
 	HTTPPort  string `envconfig:"HTTP_PORT" default:"8080"`
+
+	RabbitURL string `envconfig:"RABBIT_URL"`
+	DBDSN     string `envconfig:"DB_DSN"`
 }
 
 func Load() (*Config, error) {

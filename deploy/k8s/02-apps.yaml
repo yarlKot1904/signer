@@ -19,6 +19,7 @@ spec:
         - {name: MINIO_BUCKET, value: "docs-storage"}
         - {name: REDIS_ADDR, value: "redis:6379"}
         - {name: HTTP_PORT, value: "8080"}
+        - {name: RABBIT_URL, value: "amqp://user:password@rabbitmq:5672/"}
 ---
 apiVersion: v1
 kind: Service
@@ -46,6 +47,18 @@ spec:
         - {name: REDIS_ADDR, value: "redis:6379"}
         - {name: HTTP_PORT, value: "8080"}
 ---
+apiVersion: v1
+kind: Service
+metadata: {name: downloader-svc, namespace: default}
+spec: {ports: [{port: 80, targetPort: 8080}], selector: {app: downloader}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: signer-svc, namespace: default}
+spec: 
+  ports: [{port: 80, targetPort: 8082}]
+  selector: {app: signer}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -65,11 +78,8 @@ spec:
       - name: signer
         image: ghcr.io/yarlkot1904/signer/signer:latest
         imagePullPolicy: Always
+        ports: [{containerPort: 8082}]
         env:
-        - name: REDIS_ADDR
-          value: "redis:6379"
----
-apiVersion: v1
-kind: Service
-metadata: {name: downloader-svc, namespace: default}
-spec: {ports: [{port: 80, targetPort: 8080}], selector: {app: downloader}}
+        - {name: DB_DSN, value: "postgres://user:password@postgres:5432/signer_db"}
+        - {name: RABBIT_URL, value: "amqp://user:password@rabbitmq:5672/"}
+        - {name: HTTP_PORT, value: "8082"}
