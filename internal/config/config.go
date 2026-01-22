@@ -10,7 +10,7 @@ type Config struct {
 
 	MinioRegion string `envconfig:"MINIO_REGION" default:"us-east-1"`
 
-	RedisAddr string `envconfig:"REDIS_ADDR" required:"true"`
+	RedisAddr string `envconfig:"REDIS_ADDR"`
 	HTTPPort  string `envconfig:"HTTP_PORT" default:"8080"`
 
 	RabbitURL string `envconfig:"RABBIT_URL"`
