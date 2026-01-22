@@ -38,3 +38,64 @@ metadata: {name: minio, namespace: default}
 spec:
   ports: [{port: 9000, name: api}, {port: 9001, name: console}]
   selector: {app: minio}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: rabbitmq, namespace: default}
+spec:
+  ports: 
+    - {port: 5672, name: amqp}
+    - {port: 15672, name: management}
+  selector: {app: rabbitmq}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: rabbitmq, namespace: default}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: rabbitmq}}
+  template:
+    metadata: {labels: {app: rabbitmq}}
+    spec:
+      containers:
+      - name: rabbitmq
+        image: rabbitmq:3-management-alpine
+        ports: [{containerPort: 5672}, {containerPort: 15672}]
+        env:
+        - {name: RABBITMQ_DEFAULT_USER, value: "user"}
+        - {name: RABBITMQ_DEFAULT_PASS, value: "password"}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: postgres-pvc, namespace: default}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 1Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: default}
+spec: {ports: [{port: 5432}], selector: {app: postgres}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: postgres, namespace: default}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports: [{containerPort: 5432}]
+        env:
+        - {name: POSTGRES_USER, value: "user"}
+        - {name: POSTGRES_PASSWORD, value: "password"}
+        - {name: POSTGRES_DB, value: "signer_db"}
+        volumeMounts:
+        - {name: pg-data, mountPath: /var/lib/postgresql/data}
+      volumes:
+      - name: pg-data
+        persistentVolumeClaim: {claimName: postgres-pvc}

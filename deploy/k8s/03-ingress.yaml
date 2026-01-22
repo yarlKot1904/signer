@@ -31,3 +31,10 @@ spec:
             name: uploader-svc
             port: 
               number: 80
+      - path: /api/
+        pathType: Prefix
+        backend: 
+          service: 
+            name: signer-svc
+            port: 
+              number: 80
