@@ -285,6 +285,7 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(fmt.Sprintf(`{"status":"success","signed_url":"/download/%s?signed=1"}`, session.Token)))
+	log.Printf("SIGNED URL: http://signer.local/download/%s?signed=1", session.Token)
 }
 
 func generateCode() (string, error) {
