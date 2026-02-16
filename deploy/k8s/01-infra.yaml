@@ -57,24 +57,36 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: rabbitmq, namespace: default}
+metadata:
+  name: rabbitmq
+  namespace: default
 spec:
   replicas: 1
-  selector: {matchLabels: {app: rabbitmq}}
+  selector:
+    matchLabels:
+      app: rabbitmq
   template:
-    metadata: {labels: {app: rabbitmq}}
+    metadata:
+      labels:
+        app: rabbitmq
     spec:
       containers:
       - name: rabbitmq
         image: rabbitmq:3-management-alpine
         ports:
-          - {containerPort: 5672}
-          - {containerPort: 15672}
+        - containerPort: 5672
+        - containerPort: 15672
         env:
-          - name: RABBITMQ_DEFAULT_USER
-            valueFrom: {secretKeyRef: {name: signer-secrets, key: RABBIT_USER}}
-          - name: RABBITMQ_DEFAULT_PASS
-            valueFrom: {secretKeyRef: {name: signer-secrets, key: RABBIT_PASS}}
+        - name: RABBITMQ_DEFAULT_USER
+          valueFrom:
+            secretKeyRef:
+              name: signer-secrets
+              key: RABBIT_USER
+        - name: RABBITMQ_DEFAULT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: signer-secrets
+              key: RABBIT_PASS
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
