@@ -29,8 +29,15 @@ spec:
         args: ["server", "/data", "--console-address", ":9001"]
         ports: [{containerPort: 9000}, {containerPort: 9001}]
         env:
-        - {name: MINIO_ROOT_USER, value: "minioadmin"}
-        - {name: MINIO_ROOT_PASSWORD, value: "minioadmin"}
+        - name: MINIO_ROOT_USER
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_ID}}
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_SECRET}}
+        volumeMounts:
+        - {name: minio-data, mountPath: /data}
+      volumes:
+      - name: minio-data
+        persistentVolumeClaim: {claimName: minio-pvc}
 ---
 apiVersion: v1
 kind: Service
@@ -60,10 +67,14 @@ spec:
       containers:
       - name: rabbitmq
         image: rabbitmq:3-management-alpine
-        ports: [{containerPort: 5672}, {containerPort: 15672}]
+        ports:
+          - {containerPort: 5672}
+          - {containerPort: 15672}
         env:
-        - {name: RABBITMQ_DEFAULT_USER, value: "user"}
-        - {name: RABBITMQ_DEFAULT_PASS, value: "password"}
+          - name: RABBITMQ_DEFAULT_USER
+            valueFrom: {secretKeyRef: {name: signer-secrets, key: RABBIT_USER}}
+          - name: RABBITMQ_DEFAULT_PASS
+            valueFrom: {secretKeyRef: {name: signer-secrets, key: RABBIT_PASS}}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -91,11 +102,49 @@ spec:
         image: postgres:15-alpine
         ports: [{containerPort: 5432}]
         env:
-        - {name: POSTGRES_USER, value: "user"}
-        - {name: POSTGRES_PASSWORD, value: "password"}
-        - {name: POSTGRES_DB, value: "signer_db"}
-        volumeMounts:
-        - {name: pg-data, mountPath: /var/lib/postgresql/data}
-      volumes:
-      - name: pg-data
-        persistentVolumeClaim: {claimName: postgres-pvc}
+        - name: POSTGRES_USER
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: POSTGRES_USER}}
+        - name: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: POSTGRES_PASSWORD}}
+        - name: POSTGRES_DB
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: POSTGRES_DB}}
+          volumeMounts:
+          - {name: pg-data, mountPath: /var/lib/postgresql/data}
+        volumes:
+        - name: pg-data
+          persistentVolumeClaim: {claimName: postgres-pvc}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: minio-pvc, namespace: default}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 5Gi}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+  namespace: default
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: mc
+        image: minio/mc
+        env:
+        - name: MINIO_ID
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_ID}}
+        - name: MINIO_SECRET
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_SECRET}}
+        command: ["/bin/sh","-c"]
+        args:
+          - |
+            until /usr/bin/mc alias set myminio http://minio:9000 "$MINIO_ID" "$MINIO_SECRET"; do
+              echo "...waiting minio...";
+              sleep 2;
+            done
+            /usr/bin/mc mb myminio/docs-storage --ignore-existing
+            echo "minio bucket ready"
+

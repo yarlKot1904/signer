@@ -39,40 +39,41 @@ spec:
       - name: downloader
         image: ghcr.io/yarlkot1904/signer/downloader:latest
         imagePullPolicy: Always
-        ports: [{containerPort: 8080}]
+        ports: [{containerPort: 8081}]
         env:
-        - {name: MINIO_ENDPOINT, value: "http://minio:9000"}
-        - {name: MINIO_ID, value: "minioadmin"}
-        - {name: MINIO_SECRET, value: "minioadmin"}
-        - {name: REDIS_ADDR, value: "redis:6379"}
-        - {name: HTTP_PORT, value: "8080"}
+        - name: MINIO_ENDPOINT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_ENDPOINT}}
+        - name: MINIO_ID
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_ID}}
+        - name: MINIO_SECRET
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_SECRET}}
+        - name: MINIO_BUCKET
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_BUCKET}}
+        - name: MINIO_REGION
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_REGION}}
+        - name: REDIS_ADDR
+          valueFrom: {configMapKeyRef: {name: signer-config, key: REDIS_ADDR}}
+        - name: HTTP_PORT
+          value: "8081"
+        - name: DB_DSN
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: DB_DSN}}
 ---
 apiVersion: v1
 kind: Service
 metadata: {name: downloader-svc, namespace: default}
-spec: {ports: [{port: 80, targetPort: 8080}], selector: {app: downloader}}
----
-apiVersion: v1
-kind: Service
-metadata: {name: signer-svc, namespace: default}
-spec: 
-  ports: [{port: 80, targetPort: 8082}]
-  selector: {app: signer}
+spec:
+  ports: [{port: 80, targetPort: 8081}]
+  selector: {app: downloader}
+
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata:
-  name: signer
-  namespace: default
+metadata: {name: signer, namespace: default}
 spec:
   replicas: 1
-  selector:
-    matchLabels:
-      app: signer
+  selector: {matchLabels: {app: signer}}
   template:
-    metadata:
-      labels:
-        app: signer
+    metadata: {labels: {app: signer}}
     spec:
       containers:
       - name: signer
@@ -80,6 +81,76 @@ spec:
         imagePullPolicy: Always
         ports: [{containerPort: 8082}]
         env:
-        - {name: DB_DSN, value: "postgres://user:password@postgres:5432/signer_db"}
-        - {name: RABBIT_URL, value: "amqp://user:password@rabbitmq:5672/"}
-        - {name: HTTP_PORT, value: "8082"}
+        - name: HTTP_PORT
+          value: "8082"
+        - name: DB_DSN
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: DB_DSN}}
+        - name: RABBIT_URL
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: RABBIT_URL}}
+
+        - name: MINIO_ENDPOINT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_ENDPOINT}}
+        - name: MINIO_ID
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_ID}}
+        - name: MINIO_SECRET
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_SECRET}}
+        - name: MINIO_BUCKET
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_BUCKET}}
+        - name: MINIO_REGION
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_REGION}}
+
+        - name: PDFSIGN_URL
+          valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGN_URL}}
+        - name: MASTER_KEY_HEX
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MASTER_KEY_HEX}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: signer-svc, namespace: default}
+spec:
+  ports: [{port: 80, targetPort: 8082}]
+  selector: {app: signer}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pdfsigner
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pdfsigner
+  template:
+    metadata:
+      labels:
+        app: pdfsigner
+    spec:
+      containers:
+      - name: pdfsigner
+        image: ghcr.io/yarlkot1904/signer/pdfsigner:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8090
+        readinessProbe:
+          httpGet: {path: /health, port: 8090}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 8090}
+          initialDelaySeconds: 15
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pdfsigner
+  namespace: default
+spec:
+  selector:
+    app: pdfsigner
+  ports:
+  - name: http
+    port: 8090
+    targetPort: 8090
+

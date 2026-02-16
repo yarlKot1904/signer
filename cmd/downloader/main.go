@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/yarlKot1904/signer/internal/config"
 	"github.com/yarlKot1904/signer/internal/infra"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -22,12 +25,24 @@ type FileMeta struct {
 	MimeType     string `json:"mime_type"`
 }
 
+type SigningSession struct {
+	Token       string `gorm:"primaryKey"`
+	SignedS3Key string
+}
+
+var db *gorm.DB
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("Config error:", err)
 	}
-
+	if cfg.DBDSN != "" {
+		db, err = gorm.Open(postgres.Open(cfg.DBDSN), &gorm.Config{})
+		if err != nil {
+			log.Fatal("DB connect failed:", err)
+		}
+	}
 	ctx := context.Background()
 	s3Client, err := infra.NewS3Client(ctx, cfg.MinioEndpoint, cfg.MinioID, cfg.MinioSecret, cfg.MinioRegion)
 	if err != nil {
@@ -47,7 +62,7 @@ func main() {
 		serveFile(w, r, ctx, redisClient, s3Client, cfg.MinioBucket, true)
 	})
 
-	log.Printf("📥 Downloader (v2) service started on :%s", cfg.HTTPPort)
+	log.Printf("Downloader service started on :%s", cfg.HTTPPort)
 	if err := http.ListenAndServe(":"+cfg.HTTPPort, nil); err != nil {
 		log.Fatal(err)
 	}
@@ -69,6 +84,25 @@ func serveFile(w http.ResponseWriter, r *http.Request, ctx context.Context, rdb 
 
 	var meta FileMeta
 	json.Unmarshal([]byte(val), &meta)
+
+	if r.URL.Query().Get("signed") == "1" {
+		if db == nil {
+			http.Error(w, "Signed mode unavailable", http.StatusInternalServerError)
+			return
+		}
+		var s SigningSession
+		res := db.First(&s, "token = ?", token)
+		if errors.Is(res.Error, gorm.ErrRecordNotFound) || s.SignedS3Key == "" {
+			http.Error(w, "Signed document not found", http.StatusNotFound)
+			return
+		} else if res.Error != nil {
+			http.Error(w, "DB error", http.StatusInternalServerError)
+			return
+		}
+		meta.S3Key = s.SignedS3Key
+		meta.OriginalName = "signed_" + meta.OriginalName
+		meta.MimeType = "application/pdf"
+	}
 
 	obj, err := s3c.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),

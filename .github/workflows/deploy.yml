@@ -51,3 +51,10 @@ jobs:
           file: ./deploy/docker/signer.Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/signer:latest
+      - name: Build and push PdfSigner
+        uses: docker/build-push-action@v4
+        with:
+          context: ./pdfsigner
+          file: ./pdfsigner/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/pdfsigner:latest
