@@ -15,6 +15,9 @@ type Config struct {
 
 	RabbitURL string `envconfig:"RABBIT_URL"`
 	DBDSN     string `envconfig:"DB_DSN"`
+
+	PDFSignURL   string `envconfig:"PDFSIGN_URL"`
+	MasterKeyHex string `envconfig:"MASTER_KEY_HEX"`
 }
 
 func Load() (*Config, error) {
