@@ -61,14 +61,11 @@ class PdfSigningService {
             val signer = CmsSigner(key, cert)
 
             val out = ByteArrayOutputStream()
-
             SignatureOptions().use { opts ->
                 opts.preferredSignatureSize = 200_000
-
                 doc.addSignature(signature, signer, opts)
                 doc.saveIncremental(out)
             }
-
             return out.toByteArray()
         }
     }
