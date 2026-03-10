@@ -118,7 +118,6 @@ class PdfSigningService {
             return PDType0Font.load(doc, it, true)
         }
     }
-}
     private class CmsSigner(
         private val privateKey: PrivateKey,
         private val cert: X509Certificate
