@@ -65,52 +65,49 @@ class PdfSigningService {
         val emailMatch = Regex("""[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}""").find(subject)?.value
         return emailMatch
     }
-   private fun stampLastPage(doc: PDDocument, cert: X509Certificate) {
-    val lastPageIndex = doc.numberOfPages - 1
-    val page = doc.getPage(lastPageIndex)
-    val box = page.mediaBox
-    val email = extractEmailFromSubject(cert.subjectX500Principal.name) ?: cert.subjectX500Principal.name
-    val dateStr = Instant.now().toString()
-    val title = "Документ подписан электронной подписью"
-    val line1 = "Email: $email"
-    val line2 = "Дата:  $dateStr"
-    val padding = 10f
-    val blockWidth = 360f
-    val blockHeight = 78f
-    val x = box.width - blockWidth - 24f
-    val y = 24f
-    val fontRegular = loadFont(doc, "fonts/DejaVuSans.ttf")
-    val fontBold = loadFont(doc, "fonts/DejaVuSans-Bold.ttf")
-    PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
-        cs.setLineWidth(1f)
-        cs.addRect(x, y, blockWidth, blockHeight)
-        cs.stroke()
-        cs.beginText()
-        try {
-            cs.setFont(fontBold, 11f)
-            cs.newLineAtOffset(x + padding, y + blockHeight - padding - 12f)
-            cs.showText(title)
-        } finally {
-            cs.endText()
-        }
-        cs.beginText()
-        try {
-            cs.setFont(fontRegular, 10f)
-            cs.newLineAtOffset(x + padding, y + blockHeight - padding - 32f)
-            cs.showText(line1)
-        } finally {
-            cs.endText()
-        }
-        cs.beginText()
-        try {
-            cs.setFont(fontRegular, 10f)
-            cs.newLineAtOffset(x + padding, y + blockHeight - padding - 48f)
-            cs.showText(line2)
-        } finally {
-            cs.endText()
+    private fun stampLastPage(doc: PDDocument, cert: X509Certificate) {
+        val page = doc.getPage(doc.numberOfPages - 1)
+        val box = page.mediaBox
+
+        val email = extractEmailFromSubject(cert.subjectX500Principal.name) ?: cert.subjectX500Principal.name
+        val dateStr = Instant.now().toString()
+
+        val title = "Документ подписан электронной подписью"
+        val line1 = "Email: $email"
+        val line2 = "Дата:  $dateStr"
+
+        val padding = 10f
+        val blockWidth = 380f
+        val blockHeight = 82f
+
+        val margin = 24f
+        val x = (box.lowerLeftX + box.width - blockWidth - margin).coerceAtLeast(box.lowerLeftX + margin)
+        val y = (box.lowerLeftY + margin).coerceAtLeast(box.lowerLeftY + margin)
+
+        val fontRegular = loadFont(doc, "fonts/DejaVuSans.ttf")
+        val fontBold = loadFont(doc, "fonts/DejaVuSans-Bold.ttf")
+
+        PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
+            cs.setLineWidth(1f)
+            cs.addRect(x, y, blockWidth, blockHeight)
+            cs.stroke()
+
+            fun drawLine(text: String, font: PDType0Font, size: Float, dyFromTop: Float) {
+                cs.beginText()
+                try {
+                    cs.setFont(font, size)
+                    cs.newLineAtOffset(x + padding, y + blockHeight - padding - dyFromTop)
+                    cs.showText(text)
+                } finally {
+                    cs.endText()
+                }
+            }
+
+            drawLine(title, fontBold, 11f, 12f)
+            drawLine(line1, fontRegular, 10f, 32f)
+            drawLine(line2, fontRegular, 10f, 48f)
         }
     }
-}
     private fun loadFont(doc: PDDocument, resourcePath: String): PDType0Font {
         val stream = Thread.currentThread().contextClassLoader.getResourceAsStream(resourcePath)
             ?: throw IllegalStateException("Font resource not found: $resourcePath")
