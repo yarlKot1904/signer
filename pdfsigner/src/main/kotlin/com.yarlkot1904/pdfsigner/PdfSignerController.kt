@@ -30,9 +30,10 @@ class PdfSignerController(
     fun sign(
         @RequestPart("pdf") pdf: MultipartFile,
         @RequestPart("certPem") certPem: String,
-        @RequestPart("keyPem") keyPem: String
+        @RequestPart("keyPem") keyPem: String,
+        @RequestPart("documentId") documentId: String
     ): ResponseEntity<ByteArray> {
-        val signed = signingService.signPdf(pdf.bytes, certPem, keyPem)
+        val signed = signingService.signPdf(pdf.bytes, certPem, keyPem, documentId)
         return ResponseEntity
             .ok()
             .contentType(MediaType.APPLICATION_PDF)
