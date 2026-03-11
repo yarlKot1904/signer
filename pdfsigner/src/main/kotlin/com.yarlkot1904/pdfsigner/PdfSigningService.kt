@@ -194,7 +194,7 @@ class PdfSigningService {
 
         val margin = 24f
         val x = (box.lowerLeftX + box.width - blockWidth - margin).coerceAtLeast(box.lowerLeftX + margin)
-        val y = (box.lowerLeftY + margin).coerceAtLeast(box.lowerLeftY + margin)
+        val y = (box.lowerLeftY + box.height - blockHeight - margin).coerceAtLeast(box.lowerLeftY + margin)
         logger.info(
             "Stamping last page: pageIndex={}, x={}, y={}, width={}, height={}, email={}",
             doc.numberOfPages - 1,
