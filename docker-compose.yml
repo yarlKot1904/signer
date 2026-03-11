@@ -72,6 +72,7 @@ services:
       - MINIO_SECRET=minioadmin
       - MINIO_BUCKET=docs-storage
       - MINIO_REGION=us-east-1
+      - REDIS_ADDR=redis:6379
       - PDFSIGN_URL=http://pdfsigner:8090/sign
       - MASTER_KEY_HEX=__PUT_64_HEX_HERE__
       - DB_DSN=postgres://user:password@postgres:5432/signer_db

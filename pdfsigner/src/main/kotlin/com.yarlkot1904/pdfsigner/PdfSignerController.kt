@@ -4,6 +4,7 @@ import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import org.springframework.web.multipart.MultipartFile
+import java.io.IOException
 
 @RestController
 class PdfSignerController(
@@ -36,5 +37,32 @@ class PdfSignerController(
             .ok()
             .contentType(MediaType.APPLICATION_PDF)
             .body(signed)
+    }
+
+    @PostMapping(
+        "/verify",
+        consumes = [MediaType.MULTIPART_FORM_DATA_VALUE],
+        produces = [MediaType.APPLICATION_JSON_VALUE]
+    )
+    fun verify(
+        @RequestPart("pdf") pdf: MultipartFile
+    ): ResponseEntity<VerificationResult> {
+        if (pdf.isEmpty) {
+            return ResponseEntity
+                .badRequest()
+                .body(VerificationResult.error("uploaded PDF is empty"))
+        }
+
+        return try {
+            ResponseEntity.ok(signingService.verifyPdf(pdf.bytes))
+        } catch (_: IOException) {
+            ResponseEntity
+                .badRequest()
+                .body(VerificationResult.error("Invalid PDF"))
+        } catch (_: IllegalArgumentException) {
+            ResponseEntity
+                .badRequest()
+                .body(VerificationResult.error("Invalid PDF"))
+        }
     }
 }

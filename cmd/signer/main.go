@@ -21,11 +21,14 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 	"github.com/yarlKot1904/signer/internal/config"
 	"github.com/yarlKot1904/signer/internal/infra"
 	"golang.org/x/crypto/bcrypt"
@@ -63,11 +66,28 @@ type SignRequest struct {
 	Password string `json:"password"`
 }
 
+type VerifyRequest struct {
+	Token string `json:"token"`
+}
+
+type VerificationResult struct {
+	Status                string  `json:"status"`
+	SignaturePresent      bool    `json:"signature_present"`
+	IntegrityValid        bool    `json:"integrity_valid"`
+	SignerSubject         *string `json:"signer_subject"`
+	SignerCN              *string `json:"signer_cn"`
+	SigningTime           *string `json:"signing_time"`
+	CertificateSelfSigned *bool   `json:"certificate_self_signed"`
+	CertificateTrusted    *bool   `json:"certificate_trusted"`
+	Error                 *string `json:"error"`
+}
+
 var (
 	db        *gorm.DB
 	appCfg    *config.Config
 	appCtx    context.Context
 	s3Client  *s3.Client
+	redisDB   *redis.Client
 	masterKey []byte
 )
 
@@ -93,6 +113,11 @@ func main() {
 	s3Client, err = infra.NewS3Client(appCtx, appCfg.MinioEndpoint, appCfg.MinioID, appCfg.MinioSecret, appCfg.MinioRegion)
 	if err != nil {
 		log.Fatal("S3 connect failed:", err)
+	}
+
+	redisDB, err = infra.NewRedisClient(appCfg.RedisAddr)
+	if err != nil {
+		log.Fatal("Redis connect failed:", err)
 	}
 
 	db, err = gorm.Open(postgres.Open(appCfg.DBDSN), &gorm.Config{})
@@ -150,6 +175,7 @@ func main() {
 	}()
 
 	http.HandleFunc("/api/sign", handleSignRequest)
+	http.HandleFunc("/api/verify", handleVerifyRequest)
 
 	log.Printf("Signer API started on :%s", appCfg.HTTPPort)
 	if err := http.ListenAndServe(":"+appCfg.HTTPPort, nil); err != nil {
@@ -288,6 +314,117 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("SIGNED URL: http://signer.local/download/%s?signed=1", session.Token)
 }
 
+func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	switch {
+	case strings.HasPrefix(contentType, "application/json"):
+		handleVerifyByToken(w, r)
+	case strings.HasPrefix(contentType, "multipart/form-data"):
+		handleVerifyByUpload(w, r)
+	default:
+		writeVerificationJSON(w, http.StatusBadRequest, verificationError("error", "unsupported content type"))
+	}
+}
+
+func handleVerifyByToken(w http.ResponseWriter, r *http.Request) {
+	var req VerifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeVerificationJSON(w, http.StatusBadRequest, verificationError("error", "bad json"))
+		return
+	}
+	if strings.TrimSpace(req.Token) == "" {
+		writeVerificationJSON(w, http.StatusBadRequest, verificationError("error", "token is required"))
+		return
+	}
+
+	if _, err := redisDB.Get(appCtx, "doc:"+req.Token).Result(); err != nil {
+		writeVerificationJSON(w, http.StatusNotFound, verificationError("error", "token not found or expired"))
+		return
+	}
+
+	var session SigningSession
+	result := db.First(&session, "token = ?", req.Token)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) || session.SignedS3Key == "" {
+		writeVerificationJSON(w, http.StatusNotFound, verificationError("error", "signed document not found"))
+		return
+	} else if result.Error != nil {
+		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "database lookup failed"))
+		return
+	}
+
+	pdfBytes, err := getObjectBytes(appCtx, s3Client, appCfg.MinioBucket, session.SignedS3Key)
+	if err != nil {
+		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "failed to load signed PDF"))
+		return
+	}
+
+	statusCode, respBody, err := verifyPDFViaService(derivePDFVerifyURL(appCfg.PDFSignURL), pdfBytes)
+	if err != nil {
+		log.Printf("pdf verification error: %v", err)
+		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "verification service failed"))
+		return
+	}
+	if statusCode == http.StatusBadRequest {
+		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "stored signed PDF could not be verified"))
+		return
+	}
+	if statusCode != http.StatusOK {
+		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "verification service returned an unexpected response"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(respBody)
+}
+
+func handleVerifyByUpload(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeVerificationJSON(w, http.StatusBadRequest, verificationError("error", "invalid multipart form"))
+		return
+	}
+
+	file, header, err := r.FormFile("pdf")
+	if err != nil {
+		writeVerificationJSON(w, http.StatusBadRequest, verificationError("error", "pdf file is required"))
+		return
+	}
+	defer file.Close()
+
+	fileType := strings.ToLower(header.Header.Get("Content-Type"))
+	fileName := strings.ToLower(header.Filename)
+	if fileType != "application/pdf" && !strings.HasSuffix(fileName, ".pdf") {
+		writeVerificationJSON(w, http.StatusBadRequest, verificationError("error", "uploaded file must be a PDF"))
+		return
+	}
+
+	pdfBytes, err := io.ReadAll(file)
+	if err != nil {
+		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "failed to read uploaded PDF"))
+		return
+	}
+	if len(pdfBytes) == 0 {
+		writeVerificationJSON(w, http.StatusBadRequest, verificationError("error", "uploaded PDF is empty"))
+		return
+	}
+
+	statusCode, respBody, err := verifyPDFViaService(derivePDFVerifyURL(appCfg.PDFSignURL), pdfBytes)
+	if err != nil {
+		log.Printf("pdf verification error: %v", err)
+		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "verification service failed"))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_, _ = w.Write(respBody)
+}
+
 func generateCode() (string, error) {
 	max := big.NewInt(1000000)
 	n, err := rand.Int(rand.Reader, max)
@@ -384,6 +521,58 @@ func signPDFViaService(pdfSignURL string, pdfBytes, certPEM, keyPEM []byte) ([]b
 	return io.ReadAll(resp.Body)
 }
 
+func verifyPDFViaService(pdfVerifyURL string, pdfBytes []byte) (int, []byte, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	pdfHdr := make(textproto.MIMEHeader)
+	pdfHdr.Set("Content-Disposition", `form-data; name="pdf"; filename="document.pdf"`)
+	pdfHdr.Set("Content-Type", "application/pdf")
+
+	pdfPart, err := w.CreatePart(pdfHdr)
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, err := pdfPart.Write(pdfBytes); err != nil {
+		return 0, nil, err
+	}
+	if err := w.Close(); err != nil {
+		return 0, nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, pdfVerifyURL, &buf)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, body, nil
+}
+
+func derivePDFVerifyURL(pdfSignURL string) string {
+	u, err := url.Parse(pdfSignURL)
+	if err != nil {
+		return strings.TrimRight(pdfSignURL, "/") + "/verify"
+	}
+
+	if strings.HasSuffix(u.Path, "/sign") {
+		u.Path = strings.TrimSuffix(u.Path, "/sign") + "/verify"
+	} else {
+		u.Path = strings.TrimRight(u.Path, "/") + "/verify"
+	}
+	return u.String()
+}
+
 func getObjectBytes(ctx context.Context, s3c *s3.Client, bucket, key string) ([]byte, error) {
 	obj, err := s3c.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
@@ -424,4 +613,19 @@ func encryptAES(key, data []byte) (string, error) {
 
 	ciphertext := aesGCM.Seal(nonce, nonce, data, nil)
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+func verificationError(status, message string) VerificationResult {
+	return VerificationResult{
+		Status:           status,
+		SignaturePresent: false,
+		IntegrityValid:   false,
+		Error:            &message,
+	}
+}
+
+func writeVerificationJSON(w http.ResponseWriter, statusCode int, result VerificationResult) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(result)
 }

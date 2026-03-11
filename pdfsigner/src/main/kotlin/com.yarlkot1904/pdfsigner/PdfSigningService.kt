@@ -1,16 +1,19 @@
 package com.yarlkot1904.pdfsigner
+import com.fasterxml.jackson.databind.PropertyNamingStrategies
+import com.fasterxml.jackson.databind.annotation.JsonNaming
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPageContentStream
-import org.apache.pdfbox.pdmodel.font.PDType1Font
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureInterface
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureOptions
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder
+import org.bouncycastle.cms.CMSSignedData
 import org.bouncycastle.cms.CMSProcessableByteArray
 import org.bouncycastle.cms.CMSSignedDataGenerator
 import org.bouncycastle.jce.provider.BouncyCastleProvider
+import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder
 import org.bouncycastle.openssl.PEMKeyPair
 import org.bouncycastle.openssl.PEMParser
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
@@ -18,16 +21,40 @@ import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder
 import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder
 import org.bouncycastle.cert.X509CertificateHolder
 import org.bouncycastle.util.Store
+import org.bouncycastle.util.Selector
 import org.bouncycastle.cert.jcajce.JcaCertStore
 import org.springframework.stereotype.Service
 import java.io.*
 import java.security.PrivateKey
 import java.security.Security
+import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.time.Instant
 import java.util.*
-import org.apache.pdfbox.cos.COSName
 import org.apache.pdfbox.pdmodel.font.PDType0Font
+
+@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
+data class VerificationResult(
+    val status: String,
+    val signaturePresent: Boolean,
+    val integrityValid: Boolean,
+    val signerSubject: String? = null,
+    val signerCn: String? = null,
+    val signingTime: String? = null,
+    val certificateSelfSigned: Boolean? = null,
+    val certificateTrusted: Boolean? = null,
+    val error: String? = null
+) {
+    companion object {
+        fun error(message: String): VerificationResult = VerificationResult(
+            status = "error",
+            signaturePresent = false,
+            integrityValid = false,
+            error = message
+        )
+    }
+}
+
 @Service
 class PdfSigningService {
     init {
@@ -59,12 +86,68 @@ class PdfSigningService {
             return out.toByteArray()
         }
     }
+
+    fun verifyPdf(pdfBytes: ByteArray): VerificationResult {
+        PDDocument.load(ByteArrayInputStream(pdfBytes)).use { doc ->
+            val signatures = doc.signatureDictionaries
+            if (signatures.isEmpty()) {
+                return VerificationResult(
+                    status = "unsigned",
+                    signaturePresent = false,
+                    integrityValid = false
+                )
+            }
+
+            val signature = signatures.first()
+            val contents = signature.getContents(pdfBytes)
+            val signedContent = signature.getSignedContent(pdfBytes)
+            val cms = CMSSignedData(CMSProcessableByteArray(signedContent), contents)
+            val signerInfo = cms.signerInfos.signers.firstOrNull()
+                ?: return invalidSignature(signature, "No signer info present")
+
+            val certStore = cms.certificates
+            @Suppress("UNCHECKED_CAST")
+            val matches = certStore.getMatches(signerInfo.sid as Selector<X509CertificateHolder>)
+            val certHolder = matches.firstOrNull() as? X509CertificateHolder
+                ?: return invalidSignature(signature, "Signer certificate not found")
+            val cert = JcaX509CertificateConverter()
+                .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                .getCertificate(certHolder)
+
+            val integrityValid = signerInfo.verify(
+                JcaSimpleSignerInfoVerifierBuilder()
+                    .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                    .build(cert)
+            )
+
+            val subject = cert.subjectX500Principal.name
+            val signingTime = signature.signDate?.toInstant()?.toString()
+            val selfSigned = isSelfSigned(cert)
+
+            return VerificationResult(
+                status = if (integrityValid) "verified" else "invalid_signature",
+                signaturePresent = true,
+                integrityValid = integrityValid,
+                signerSubject = subject,
+                signerCn = extractEmailFromSubject(subject) ?: extractCn(subject),
+                signingTime = signingTime,
+                certificateSelfSigned = selfSigned,
+                certificateTrusted = null,
+                error = if (integrityValid) null else "Signature integrity check failed"
+            )
+        }
+    }
+
     private fun extractEmailFromSubject(subject: String): String? {
         val cnMatch = Regex("""CN=([^,]+)""").find(subject)?.groupValues?.getOrNull(1)?.trim()
         if (!cnMatch.isNullOrBlank() && cnMatch.contains("@")) return cnMatch
         val emailMatch = Regex("""[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}""").find(subject)?.value
         return emailMatch
     }
+
+    private fun extractCn(subject: String): String? =
+        Regex("""CN=([^,]+)""").find(subject)?.groupValues?.getOrNull(1)?.trim()
+
     private fun stampLastPage(doc: PDDocument, cert: X509Certificate) {
         val page = doc.getPage(doc.numberOfPages - 1)
         val box = page.mediaBox
@@ -163,6 +246,31 @@ class PdfSigningService {
                 is PrivateKeyInfo -> converter.getPrivateKey(obj)
                 else -> throw IllegalArgumentException("Unsupported KEY PEM format: ${obj?.javaClass?.name}")
             }
+        }
+    }
+
+    private fun invalidSignature(signature: PDSignature, message: String): VerificationResult =
+        VerificationResult(
+            status = "invalid_signature",
+            signaturePresent = true,
+            integrityValid = false,
+            signingTime = signature.signDate?.toInstant()?.toString(),
+            error = message,
+            certificateTrusted = null
+        )
+
+    private fun isSelfSigned(cert: X509Certificate): Boolean {
+        if (cert.subjectX500Principal != cert.issuerX500Principal) {
+            return false
+        }
+
+        return try {
+            cert.verify(cert.publicKey)
+            true
+        } catch (_: CertificateException) {
+            false
+        } catch (_: Exception) {
+            false
         }
     }
 }
