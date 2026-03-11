@@ -97,7 +97,7 @@ type SignedDocument struct {
 	ID            uint      `gorm:"primaryKey"`
 	Token         string    `gorm:"index"`
 	SignedS3Key   string    `gorm:"uniqueIndex;not null"`
-	SignedPDFSHA  string    `gorm:"uniqueIndex;not null"`
+	SignedPDFSHA  string    `gorm:"column:signed_pdfsha;uniqueIndex;not null"`
 	CertSHA       string    `gorm:"not null"`
 	SignerSubject string    `gorm:"not null"`
 	SignedAt      time.Time `gorm:"not null"`
@@ -348,7 +348,7 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 		Columns: []clause.Column{{Name: "signed_s3_key"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
 			"token":          signedDoc.Token,
-			"signed_pdf_sha": signedDoc.SignedPDFSHA,
+			"signed_pdfsha":  signedDoc.SignedPDFSHA,
 			"cert_sha":       signedDoc.CertSHA,
 			"signer_subject": signedDoc.SignerSubject,
 			"signed_at":      signedDoc.SignedAt,
@@ -592,7 +592,7 @@ func verifyServiceOwnedPDF(pdfBytes []byte) (int, VerificationResult, error) {
 	documentHash := sha256Hex(pdfBytes)
 
 	var signedDoc SignedDocument
-	result := db.First(&signedDoc, "signed_pdf_sha = ?", documentHash)
+	result := db.First(&signedDoc, "signed_pdfsha = ?", documentHash)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		msg := "document is not signed by this service"
 		return http.StatusOK, VerificationResult{
