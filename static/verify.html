@@ -3,519 +3,411 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Проверка PDF | Signer</title>
+    <title>CryptoSigner - Проверка PDF</title>
+    <link href="https://releases.transloadit.com/uppy/v3.25.0/uppy.min.css" rel="stylesheet">
     <style>
-        :root {
-            --bg: #f4f7f6;
-            --panel: #ffffff;
-            --text: #1f2933;
-            --muted: #6b7280;
-            --border: #d9e2ec;
-            --accent: #2ea7e0;
-            --accent-dark: #147bb0;
-            --success-bg: #e8f5e9;
-            --success-text: #2e7d32;
-            --error-bg: #ffebee;
-            --error-text: #c62828;
-            --warning-bg: #fff8e1;
-            --warning-text: #8d6e00;
-        }
-
-        * { box-sizing: border-box; }
-
         body {
-            margin: 0;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: var(--bg);
-            color: var(--text);
+            background: #f4f7f6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             min-height: 100vh;
+            margin: 0;
+            padding: 20px;
         }
 
-        .page {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 40px 20px;
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+            width: 100%;
+            max-width: 560px;
         }
 
-        .hero {
+        .topbar {
             display: flex;
             justify-content: space-between;
-            align-items: flex-start;
-            gap: 24px;
-            margin-bottom: 24px;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
         }
 
-        .hero h1 {
-            margin: 0 0 10px;
-            font-size: 2rem;
-        }
-
-        .hero p {
+        h2 {
             margin: 0;
-            color: var(--muted);
-            max-width: 680px;
-            line-height: 1.5;
+            color: #333;
         }
 
-        .hero a {
-            color: var(--accent);
+        .nav-link {
+            color: #2ea7e0;
             text-decoration: none;
+            font-size: 0.95rem;
             font-weight: 600;
             white-space: nowrap;
         }
 
-        .hero a:hover { text-decoration: underline; }
+        .nav-link:hover { text-decoration: underline; }
 
-        .layout {
-            display: grid;
-            grid-template-columns: 360px 1fr;
-            gap: 24px;
-        }
-
-        .panel {
-            background: var(--panel);
-            border-radius: 16px;
-            border: 1px solid var(--border);
-            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
-            padding: 24px;
-        }
-
-        .modes {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-
-        .mode-btn {
-            flex: 1;
-            border: 1px solid var(--border);
-            background: #f8fafc;
-            color: var(--text);
-            border-radius: 10px;
-            padding: 12px 14px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .mode-btn.active {
-            background: var(--accent);
-            border-color: var(--accent);
-            color: white;
-        }
-
-        .field {
-            margin-bottom: 18px;
-        }
+        .form-group { margin-bottom: 1.25rem; }
 
         label {
             display: block;
-            margin-bottom: 8px;
-            font-size: 0.92rem;
-            color: var(--muted);
+            margin-bottom: 0.5rem;
+            color: #666;
+            font-size: 0.9rem;
         }
 
-        input[type="text"],
-        input[type="file"] {
+        input[type="text"] {
             width: 100%;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 12px 14px;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
             font-size: 1rem;
-            background: white;
+            box-sizing: border-box;
+            transition: 0.3s;
         }
 
         input[type="text"]:focus {
+            border-color: #2ea7e0;
             outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(46, 167, 224, 0.15);
         }
 
-        .hint {
-            margin-top: 8px;
-            color: var(--muted);
-            font-size: 0.85rem;
-            line-height: 1.4;
-        }
+        #uppy-dashboard { margin-top: 12px; }
 
         .actions {
             display: flex;
             gap: 12px;
-            margin-top: 12px;
+            margin-top: 20px;
         }
 
         button {
-            border: none;
-            border-radius: 10px;
-            padding: 13px 16px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .primary {
-            background: var(--accent);
-            color: white;
             flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: 0.2s;
         }
 
-        .primary:hover { background: var(--accent-dark); }
-        .primary:disabled { background: #b9dff1; cursor: not-allowed; }
+        #verify-upload {
+            background: #2ea7e0;
+            color: white;
+        }
 
-        .secondary {
+        #verify-upload:hover { background: #1d8fc5; }
+        #verify-upload:disabled { background: #b7dcea; cursor: not-allowed; }
+
+        #verify-token {
             background: #eef2f7;
-            color: var(--text);
+            color: #334155;
         }
 
-        .secondary:hover { background: #e2e8f0; }
+        #verify-token:hover { background: #e2e8f0; }
+        #verify-token:disabled { background: #e2e8f0; cursor: not-allowed; }
 
-        .status {
+        #status {
             display: none;
             margin-top: 18px;
-            border-radius: 10px;
-            padding: 12px 14px;
+            padding: 12px;
+            border-radius: 8px;
             font-size: 0.95rem;
-            line-height: 1.4;
-        }
-
-        .status.success { display: block; background: var(--success-bg); color: var(--success-text); }
-        .status.error { display: block; background: var(--error-bg); color: var(--error-text); }
-        .status.warning { display: block; background: var(--warning-bg); color: var(--warning-text); }
-
-        .result-empty {
-            color: var(--muted);
-            line-height: 1.6;
-            margin: 0;
-        }
-
-        .result-card {
-            display: none;
-            gap: 16px;
-            flex-direction: column;
-        }
-
-        .result-card.visible { display: flex; }
-
-        .result-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 16px;
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 16px;
-        }
-
-        .result-header h2 {
-            margin: 0 0 6px;
-            text-align: left;
-            font-size: 1.35rem;
-        }
-
-        .result-header p {
-            margin: 0;
-            color: var(--muted);
-        }
-
-        .badge {
-            border-radius: 999px;
-            padding: 8px 12px;
-            font-size: 0.85rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-
-        .badge.verified { background: var(--success-bg); color: var(--success-text); }
-        .badge.invalid_signature,
-        .badge.error { background: var(--error-bg); color: var(--error-text); }
-        .badge.unsigned { background: var(--warning-bg); color: var(--warning-text); }
-
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-        }
-
-        .item {
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 14px;
-            background: #fbfdff;
-        }
-
-        .item .label {
-            display: block;
-            margin-bottom: 8px;
-            color: var(--muted);
-            font-size: 0.83rem;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }
-
-        .item .value {
-            margin: 0;
-            font-size: 1rem;
             line-height: 1.45;
-            word-break: break-word;
+            white-space: pre-wrap;
         }
 
-        .json-box {
+        #status.success {
+            display: block;
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        #status.error {
+            display: block;
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        #status.warning {
+            display: block;
+            background: #fff8e1;
+            color: #8d6e00;
+        }
+
+        #result {
+            display: none;
+            margin-top: 18px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 14px;
+        }
+
+        #result.visible { display: block; }
+
+        .result-row {
+            margin-bottom: 10px;
+            color: #334155;
+            font-size: 0.95rem;
+        }
+
+        .result-row:last-child { margin-bottom: 0; }
+
+        .result-label {
+            color: #64748b;
+            margin-right: 8px;
+        }
+
+        .result-json {
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 8px;
             background: #0f172a;
             color: #e2e8f0;
-            border-radius: 12px;
-            padding: 16px;
+            font-size: 0.88rem;
             overflow: auto;
-            margin: 0;
-            font-size: 0.9rem;
-        }
-
-        @media (max-width: 900px) {
-            .layout { grid-template-columns: 1fr; }
-            .hero { flex-direction: column; }
         }
     </style>
 </head>
 <body>
-    <div class="page">
-        <div class="hero">
-            <div>
-                <h1>Проверка PDF</h1>
-                <p>Проверьте, что PDF действительно подписан, что целостность подписи не нарушена, и какой сертификат встроен в документ.</p>
-            </div>
-            <a href="/">К загрузке</a>
-        </div>
 
-        <div class="layout">
-            <div class="panel">
-                <div class="modes">
-                    <button type="button" class="mode-btn active" data-mode="token">По токену</button>
-                    <button type="button" class="mode-btn" data-mode="upload">По PDF</button>
-                </div>
-
-                <div id="token-mode">
-                    <div class="field">
-                        <label for="token">Токен</label>
-                        <input id="token" type="text" placeholder="uuid токен">
-                        <div class="hint">Подходит для подписанных документов, сохраненных в этой системе.</div>
-                    </div>
-                </div>
-
-                <div id="upload-mode" style="display:none;">
-                    <div class="field">
-                        <label for="pdf">PDF файл</label>
-                        <input id="pdf" type="file" accept=".pdf,application/pdf">
-                        <div class="hint">Загрузите PDF, чтобы проверить наличие подписи и ее целостность.</div>
-                    </div>
-                </div>
-
-                <div class="actions">
-                    <button id="verify-btn" type="button" class="primary">Проверить</button>
-                    <button id="reset-btn" type="button" class="secondary">Сбросить</button>
-                </div>
-
-                <div id="status" class="status"></div>
-            </div>
-
-            <div class="panel">
-                <div id="empty-state">
-                    <p class="result-empty">Результат появится здесь после проверки. Интерфейс покажет наличие подписи, криптографическую валидность, данные сертификата и время подписания.</p>
-                </div>
-
-                <div id="result-card" class="result-card">
-                    <div class="result-header">
-                        <div>
-                            <h2>Результат проверки</h2>
-                            <p id="result-summary"></p>
-                        </div>
-                        <span id="status-badge" class="badge">unknown</span>
-                    </div>
-
-                    <div class="grid">
-                        <div class="item">
-                            <span class="label">Подпись найдена</span>
-                            <p id="signature-present" class="value">-</p>
-                        </div>
-                        <div class="item">
-                            <span class="label">Целостность</span>
-                            <p id="integrity-valid" class="value">-</p>
-                        </div>
-                        <div class="item">
-                            <span class="label">Подписант (CN)</span>
-                            <p id="signer-cn" class="value">-</p>
-                        </div>
-                        <div class="item">
-                            <span class="label">Время подписания</span>
-                            <p id="signing-time" class="value">-</p>
-                        </div>
-                        <div class="item">
-                            <span class="label">Subject</span>
-                            <p id="signer-subject" class="value">-</p>
-                        </div>
-                        <div class="item">
-                            <span class="label">Self-signed</span>
-                            <p id="self-signed" class="value">-</p>
-                        </div>
-                    </div>
-
-                    <div>
-                        <span class="label">JSON</span>
-                        <pre id="raw-json" class="json-box"></pre>
-                    </div>
-                </div>
-            </div>
-        </div>
+<div class="container">
+    <div class="topbar">
+        <h2>Проверка PDF</h2>
+        <a class="nav-link" href="/">К загрузке</a>
     </div>
 
-    <script>
-        const modeButtons = document.querySelectorAll('.mode-btn');
-        const tokenMode = document.getElementById('token-mode');
-        const uploadMode = document.getElementById('upload-mode');
-        const verifyBtn = document.getElementById('verify-btn');
-        const resetBtn = document.getElementById('reset-btn');
-        const statusBox = document.getElementById('status');
-        const emptyState = document.getElementById('empty-state');
-        const resultCard = document.getElementById('result-card');
-        const tokenInput = document.getElementById('token');
-        const pdfInput = document.getElementById('pdf');
+    <div class="form-group">
+        <label for="token">Токен</label>
+        <input type="text" id="token" placeholder="uuid токен">
+    </div>
 
-        let currentMode = 'token';
+    <div id="uppy-dashboard"></div>
 
-        modeButtons.forEach((button) => {
-            button.addEventListener('click', () => setMode(button.dataset.mode));
+    <div class="actions">
+        <button id="verify-upload">Проверить PDF</button>
+        <button id="verify-token">Проверить токен</button>
+    </div>
+
+    <div id="status"></div>
+    <div id="result"></div>
+</div>
+
+<script type="module">
+    import { Uppy, Dashboard, Tus } from "https://releases.transloadit.com/uppy/v3.25.0/uppy.min.mjs";
+
+    const statusBox = document.getElementById('status');
+    const resultBox = document.getElementById('result');
+    const uploadButton = document.getElementById('verify-upload');
+    const tokenButton = document.getElementById('verify-token');
+    const tokenInput = document.getElementById('token');
+
+    let pendingVerifyToken = null;
+
+    const uppy = new Uppy({
+        debug: true,
+        autoProceed: false,
+        restrictions: {
+            maxNumberOfFiles: 1,
+            allowedFileTypes: ['.pdf'],
+            maxFileSize: 50 * 1024 * 1024
+        }
+    });
+
+    uppy.use(Dashboard, {
+        inline: true,
+        target: '#uppy-dashboard',
+        height: 300,
+        proudlyDisplayPoweredByUppy: false,
+        hideUploadButton: true,
+        note: 'PDF, до 50 MB'
+    });
+
+    uppy.use(Tus, {
+        endpoint: '/verify-files/',
+        chunkSize: 5 * 1024 * 1024
+    });
+
+    uppy.on('complete', async (result) => {
+        if (result.failed.length > 0) {
+            showStatus('Ошибка загрузки файла.', 'error');
+            setUploadButtonState(false);
+            return;
+        }
+
+        if (result.successful.length === 0 || !pendingVerifyToken) {
+            showStatus('Файл не был загружен.', 'error');
+            setUploadButtonState(false);
+            return;
+        }
+
+        await verifyByUploadToken(pendingVerifyToken);
+        pendingVerifyToken = null;
+    });
+
+    uploadButton.addEventListener('click', startUploadVerification);
+    tokenButton.addEventListener('click', verifyToken);
+
+    async function startUploadVerification() {
+        hideStatus();
+        const file = uppy.getFiles()[0];
+        if (!file) {
+            showStatus('Выберите PDF файл.', 'error');
+            return;
+        }
+
+        pendingVerifyToken = createVerifyToken();
+        uppy.setFileMeta(file.id, {
+            verifyToken: pendingVerifyToken
         });
 
-        verifyBtn.addEventListener('click', verifyDocument);
-        resetBtn.addEventListener('click', resetForm);
+        setUploadButtonState(true);
+        showStatus('Загружаем файл через Tus...', 'warning');
 
-        function setMode(mode) {
-            currentMode = mode;
-            modeButtons.forEach((button) => {
-                button.classList.toggle('active', button.dataset.mode === mode);
+        try {
+            await uppy.upload();
+        } catch (error) {
+            pendingVerifyToken = null;
+            setUploadButtonState(false);
+            showStatus('Ошибка загрузки файла.', 'error');
+        }
+    }
+
+    async function verifyByUploadToken(uploadToken) {
+        showStatus('Проверяем загруженный PDF...', 'warning');
+
+        try {
+            const response = await fetch('/api/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ upload_token: uploadToken })
             });
 
-            tokenMode.style.display = mode === 'token' ? 'block' : 'none';
-            uploadMode.style.display = mode === 'upload' ? 'block' : 'none';
-            hideStatus();
-        }
+            const data = await response.json();
+            renderResult(data);
 
-        async function verifyDocument() {
-            hideStatus();
-            verifyBtn.disabled = true;
-            verifyBtn.innerText = 'Проверяем...';
-
-            try {
-                let response;
-
-                if (currentMode === 'token') {
-                    const token = tokenInput.value.trim();
-                    if (!token) {
-                        showStatus('Введите токен.', 'error');
-                        return;
-                    }
-
-                    response = await fetch('/api/verify', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ token })
-                    });
-                } else {
-                    const file = pdfInput.files[0];
-                    if (!file) {
-                        showStatus('Выберите PDF файл.', 'error');
-                        return;
-                    }
-
-                    const formData = new FormData();
-                    formData.append('pdf', file);
-
-                    response = await fetch('/api/verify', {
-                        method: 'POST',
-                        body: formData
-                    });
-                }
-
-                const data = await response.json();
-
-                renderResult(data);
-
-                if (!response.ok) {
-                    showStatus(data.error || 'Проверка завершилась с ошибкой.', 'error');
-                    return;
-                }
-
-                showStatus(buildStatusMessage(data), mapStatusToAlert(data.status));
-            } catch (error) {
-                showStatus('Не удалось выполнить проверку.', 'error');
-            } finally {
-                verifyBtn.disabled = false;
-                verifyBtn.innerText = 'Проверить';
+            if (!response.ok) {
+                showStatus(data.error || 'Ошибка проверки.', 'error');
+                return;
             }
+
+            showStatus(buildStatusMessage(data), mapStatusToTone(data.status));
+        } catch (error) {
+            showStatus('Ошибка сети.', 'error');
+        } finally {
+            setUploadButtonState(false);
+        }
+    }
+
+    async function verifyToken() {
+        hideStatus();
+        const token = tokenInput.value.trim();
+        if (!token) {
+            showStatus('Введите токен.', 'error');
+            return;
         }
 
-        function renderResult(data) {
-            emptyState.style.display = 'none';
-            resultCard.classList.add('visible');
+        tokenButton.disabled = true;
+        tokenButton.innerText = 'Проверяем...';
 
-            const badge = document.getElementById('status-badge');
-            badge.innerText = data.status || 'unknown';
-            badge.className = `badge ${data.status || 'error'}`;
+        try {
+            const response = await fetch('/api/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token })
+            });
 
-            document.getElementById('result-summary').innerText = buildStatusMessage(data);
-            document.getElementById('signature-present').innerText = formatBoolean(data.signature_present);
-            document.getElementById('integrity-valid').innerText = formatBoolean(data.integrity_valid);
-            document.getElementById('signer-cn').innerText = data.signer_cn || '—';
-            document.getElementById('signing-time').innerText = data.signing_time || '—';
-            document.getElementById('signer-subject').innerText = data.signer_subject || '—';
-            document.getElementById('self-signed').innerText = formatNullableBoolean(data.certificate_self_signed);
-            document.getElementById('raw-json').innerText = JSON.stringify(data, null, 2);
-        }
+            const data = await response.json();
+            renderResult(data);
 
-        function buildStatusMessage(data) {
-            switch (data.status) {
-                case 'verified':
-                    return 'Подпись найдена и криптографически валидна.';
-                case 'unsigned':
-                    return 'В PDF не найдено встроенной подписи.';
-                case 'invalid_signature':
-                    return 'Подпись есть, но проверка целостности не прошла.';
-                default:
-                    return data.error || 'Проверка завершилась с ошибкой.';
+            if (!response.ok) {
+                showStatus(data.error || 'Ошибка проверки.', 'error');
+                return;
             }
+
+            showStatus(buildStatusMessage(data), mapStatusToTone(data.status));
+        } catch (error) {
+            showStatus('Ошибка сети.', 'error');
+        } finally {
+            tokenButton.disabled = false;
+            tokenButton.innerText = 'Проверить токен';
+        }
+    }
+
+    function setUploadButtonState(isBusy) {
+        uploadButton.disabled = isBusy;
+        uploadButton.innerText = isBusy ? 'Загрузка...' : 'Проверить PDF';
+    }
+
+    function renderResult(data) {
+        resultBox.className = 'visible';
+        resultBox.innerHTML = `
+            <div class="result-row"><span class="result-label">Статус:</span>${escapeHtml(data.status || '-')}</div>
+            <div class="result-row"><span class="result-label">Подпись:</span>${formatBool(data.signature_present)}</div>
+            <div class="result-row"><span class="result-label">Целостность:</span>${formatBool(data.integrity_valid)}</div>
+            <div class="result-row"><span class="result-label">CN:</span>${escapeHtml(data.signer_cn || '—')}</div>
+            <div class="result-row"><span class="result-label">Subject:</span>${escapeHtml(data.signer_subject || '—')}</div>
+            <div class="result-row"><span class="result-label">Время:</span>${escapeHtml(data.signing_time || '—')}</div>
+            <div class="result-row"><span class="result-label">Self-signed:</span>${formatNullableBool(data.certificate_self_signed)}</div>
+            <pre class="result-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+        `;
+    }
+
+    function buildStatusMessage(data) {
+        switch (data.status) {
+            case 'verified':
+                return 'Подпись валидна.';
+            case 'unsigned':
+                return 'Подпись не найдена.';
+            case 'invalid_signature':
+                return 'Подпись найдена, но невалидна.';
+            default:
+                return data.error || 'Ошибка проверки.';
+        }
+    }
+
+    function mapStatusToTone(status) {
+        if (status === 'verified') return 'success';
+        if (status === 'unsigned') return 'warning';
+        return 'error';
+    }
+
+    function formatBool(value) {
+        return value ? 'Да' : 'Нет';
+    }
+
+    function formatNullableBool(value) {
+        if (value === true) return 'Да';
+        if (value === false) return 'Нет';
+        return 'Неизвестно';
+    }
+
+    function showStatus(text, type) {
+        statusBox.textContent = text;
+        statusBox.className = type;
+    }
+
+    function hideStatus() {
+        statusBox.textContent = '';
+        statusBox.className = '';
+    }
+
+    function createVerifyToken() {
+        if (window.crypto && window.crypto.randomUUID) {
+            return window.crypto.randomUUID();
         }
 
-        function mapStatusToAlert(status) {
-            if (status === 'verified') return 'success';
-            if (status === 'unsigned') return 'warning';
-            return 'error';
-        }
+        return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
 
-        function formatBoolean(value) {
-            return value ? 'Да' : 'Нет';
-        }
+    function escapeHtml(value) {
+        return String(value)
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;');
+    }
+</script>
 
-        function formatNullableBoolean(value) {
-            if (value === true) return 'Да';
-            if (value === false) return 'Нет';
-            return 'Неизвестно';
-        }
-
-        function showStatus(text, type) {
-            statusBox.innerText = text;
-            statusBox.className = `status ${type}`;
-        }
-
-        function hideStatus() {
-            statusBox.innerText = '';
-            statusBox.className = 'status';
-        }
-
-        function resetForm() {
-            tokenInput.value = '';
-            pdfInput.value = '';
-            hideStatus();
-            emptyState.style.display = 'block';
-            resultCard.classList.remove('visible');
-        }
-    </script>
 </body>
 </html>

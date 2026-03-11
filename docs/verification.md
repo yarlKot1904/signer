@@ -20,8 +20,17 @@ Verify by uploaded PDF:
 
 ```powershell
 curl.exe -s -X POST http://localhost/api/verify `
-  -F "pdf=@C:\path\to\signed.pdf;type=application/pdf"
+  -H "Content-Type: application/json" `
+  -d "{\"upload_token\":\"<upload-token>\"}"
 ```
+
+Browser UI `/verify.html` uploads PDFs through Tus to `/verify-files/`, then calls `POST /api/verify` with an internal `upload_token`.
+
+Important:
+
+- verification only succeeds for PDFs signed by this service
+- arbitrary third-party signed PDFs are reported as `unknown_document`
+- upload verification no longer posts the raw PDF directly to `signer`
 
 ## Response
 
@@ -32,6 +41,7 @@ Example:
 ```json
 {
   "status": "verified",
+  "service_owned": true,
   "signature_present": true,
   "integrity_valid": true,
   "signer_subject": "CN=user@example.com,O=CryptoSigner Demo",
@@ -46,6 +56,7 @@ Example:
 Status values:
 
 - `verified`: signature exists and integrity verification passed
+- `unknown_document`: the uploaded PDF is not a signed artifact issued by this service
 - `unsigned`: no PDF signature dictionary was found
 - `invalid_signature`: signature exists but integrity verification failed
 - `error`: request or internal processing error
@@ -63,7 +74,8 @@ Notes:
 4. Download the result from `/download/<token>?signed=1`.
 5. Verify the signed PDF by token and by uploaded file.
 6. Verify the original unsigned PDF and confirm it returns `status=unsigned`.
-7. Modify the signed PDF and verify it again to confirm `integrity_valid=false`.
+7. Try a third-party signed PDF and confirm it returns `status=unknown_document`.
+8. Modify a signed PDF and verify it again to confirm it is no longer recognized as a service-issued artifact.
 
 Optional external confirmation:
 

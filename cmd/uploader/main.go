@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -26,11 +27,19 @@ type FileMeta struct {
 	MimeType     string `json:"mime_type"`
 	OwnerEmail   string `json:"owner_email"`
 }
+
 type TaskMessage struct {
 	Token string `json:"token"`
 	Email string `json:"email"`
 	S3Key string `json:"s3_key"`
 }
+
+const (
+	verifyUploadTTL       = time.Hour
+	verifyCleanupZSetKey  = "verify:cleanup"
+	verifyCleanupInterval = time.Minute
+	verifyObjectPrefix    = "verify/"
+)
 
 func main() {
 	cfg, err := config.Load()
@@ -87,6 +96,15 @@ func main() {
 		log.Fatal("Tusd handler error:", err)
 	}
 
+	verifyTusHandler, err := handler.NewHandler(handler.Config{
+		BasePath:              "/verify-files/",
+		StoreComposer:         composer,
+		NotifyCompleteUploads: true,
+	})
+	if err != nil {
+		log.Fatal("Verify tusd handler error:", err)
+	}
+
 	go func() {
 		for {
 			event := <-tusHandler.CompleteUploads
@@ -94,7 +112,17 @@ func main() {
 		}
 	}()
 
+	go func() {
+		for {
+			event := <-verifyTusHandler.CompleteUploads
+			handleVerifyUploadComplete(event, s3Client, cfg.MinioBucket, redisClient)
+		}
+	}()
+
+	go runVerifyCleanupLoop(ctx, s3Client, cfg.MinioBucket, redisClient)
+
 	http.Handle("/files/", http.StripPrefix("/files/", tusHandler))
+	http.Handle("/verify-files/", http.StripPrefix("/verify-files/", verifyTusHandler))
 
 	http.Handle("/", http.FileServer(http.Dir("./static")))
 
@@ -110,26 +138,12 @@ func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket s
 	if filename == "" {
 		filename = "document.pdf"
 	}
-	now := time.Now()
-	oldKey := event.Upload.Storage["Key"]
-	newKey := fmt.Sprintf("%d/%02d/%s", now.Year(), int(now.Month()), oldKey)
 
 	ctx := context.Background()
-	err := infra.MoveObject(ctx, s3Client, bucket, oldKey, newKey)
-	finalKey := oldKey
+	finalKey, err := moveUploadedObject(ctx, s3Client, bucket, event.Upload.Storage["Key"], "")
 	if err != nil {
-		log.Printf("Error moving object in S3: %v", err)
+		log.Printf("Error moving signing upload in S3: %v", err)
 		return
-	} else {
-		finalKey = newKey
-		log.Printf("Moved object in S3 from %s to %s", oldKey, newKey)
-	}
-	oldInfoKey := oldKey + ".info"
-	newInfoKey := newKey + ".info"
-
-	errInfo := infra.MoveObject(ctx, s3Client, bucket, oldInfoKey, newInfoKey)
-	if errInfo != nil {
-		log.Printf("Warning: could not move .info file: %v", errInfo)
 	}
 
 	downloadToken := uuid.New().String()
@@ -175,4 +189,98 @@ func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket s
 	log.Printf("Download: http://signer.local/download/%s", downloadToken)
 	log.Printf("View: http://signer.local/view/%s", downloadToken)
 	log.Printf("Sign: http://signer.local/sign.html?token=%s", downloadToken)
+}
+
+func handleVerifyUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket string, rdb *redis.Client) {
+	filename := event.Upload.MetaData["filename"]
+	if filename == "" {
+		filename = "document.pdf"
+	}
+
+	ctx := context.Background()
+	finalKey, err := moveUploadedObject(ctx, s3Client, bucket, event.Upload.Storage["Key"], verifyObjectPrefix)
+	if err != nil {
+		log.Printf("Error moving verify upload in S3: %v", err)
+		return
+	}
+
+	verifyToken := event.Upload.MetaData["verifyToken"]
+	if verifyToken == "" {
+		verifyToken = uuid.New().String()
+	}
+
+	meta := FileMeta{
+		OriginalName: filename,
+		S3Key:        finalKey,
+		MimeType:     event.Upload.MetaData["filetype"],
+	}
+
+	data, _ := json.Marshal(meta)
+	if err := rdb.Set(ctx, "verify:"+verifyToken, data, verifyUploadTTL).Err(); err != nil {
+		log.Printf("Error saving verify upload metadata to Redis: %v", err)
+		return
+	}
+	if err := rdb.ZAdd(ctx, verifyCleanupZSetKey, redis.Z{
+		Score:  float64(time.Now().Add(verifyUploadTTL).Unix()),
+		Member: finalKey,
+	}).Err(); err != nil {
+		log.Printf("Warning: could not schedule verify cleanup for %s: %v", finalKey, err)
+	}
+
+	log.Printf("Stored verify upload: token=%s key=%s", verifyToken, finalKey)
+}
+
+func moveUploadedObject(ctx context.Context, s3Client *s3.Client, bucket, oldKey, keyPrefix string) (string, error) {
+	now := time.Now()
+	newKey := fmt.Sprintf("%s%d/%02d/%s", keyPrefix, now.Year(), int(now.Month()), oldKey)
+
+	if err := infra.MoveObject(ctx, s3Client, bucket, oldKey, newKey); err != nil {
+		return "", err
+	}
+	log.Printf("Moved object in S3 from %s to %s", oldKey, newKey)
+
+	oldInfoKey := oldKey + ".info"
+	newInfoKey := newKey + ".info"
+	if err := infra.MoveObject(ctx, s3Client, bucket, oldInfoKey, newInfoKey); err != nil {
+		log.Printf("Warning: could not move .info file: %v", err)
+	}
+
+	return newKey, nil
+}
+
+func runVerifyCleanupLoop(ctx context.Context, s3Client *s3.Client, bucket string, rdb *redis.Client) {
+	ticker := time.NewTicker(verifyCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			cleanupExpiredVerifyObjects(ctx, s3Client, bucket, rdb)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func cleanupExpiredVerifyObjects(ctx context.Context, s3Client *s3.Client, bucket string, rdb *redis.Client) {
+	now := strconv.FormatInt(time.Now().Unix(), 10)
+	keys, err := rdb.ZRangeByScore(ctx, verifyCleanupZSetKey, &redis.ZRangeBy{
+		Min: "-inf",
+		Max: now,
+	}).Result()
+	if err != nil {
+		log.Printf("Verify cleanup scan failed: %v", err)
+		return
+	}
+
+	for _, key := range keys {
+		if err := infra.DeleteObject(ctx, s3Client, bucket, key); err != nil {
+			log.Printf("Verify cleanup delete failed for %s: %v", key, err)
+			continue
+		}
+		if err := rdb.ZRem(ctx, verifyCleanupZSetKey, key).Err(); err != nil {
+			log.Printf("Verify cleanup zset remove failed for %s: %v", key, err)
+		}
+		log.Printf("Deleted expired verify object: %s", key)
+	}
 }

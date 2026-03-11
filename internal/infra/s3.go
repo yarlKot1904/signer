@@ -59,3 +59,11 @@ func MoveObject(ctx context.Context, client *s3.Client, bucket, oldKey, newKey s
 
 	return nil
 }
+
+func DeleteObject(ctx context.Context, client *s3.Client, bucket, key string) error {
+	_, err := client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	return err
+}
