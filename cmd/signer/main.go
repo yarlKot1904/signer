@@ -435,7 +435,7 @@ func handleVerifyByToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVerifyByUploadToken(w http.ResponseWriter, uploadToken string) {
-	val, err := redisDB.Get(appCtx, "verify:"+uploadToken).Result()
+	val, err := waitForVerifyUpload(uploadToken)
 	if err != nil {
 		writeVerificationJSON(w, http.StatusNotFound, verificationError("error", "upload token not found or expired"))
 		return
@@ -462,6 +462,30 @@ func handleVerifyByUploadToken(w http.ResponseWriter, uploadToken string) {
 	}
 	defer cleanupVerifyUpload(uploadToken, meta.S3Key)
 	writeVerificationJSON(w, statusCode, verification)
+}
+
+func waitForVerifyUpload(uploadToken string) (string, error) {
+	const attempts = 10
+	const delay = 300 * time.Millisecond
+
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		val, err := redisDB.Get(appCtx, "verify:"+uploadToken).Result()
+		if err == nil {
+			if i > 0 {
+				log.Printf("verify upload token became available after retry: token=%s attempts=%d", uploadToken, i+1)
+			}
+			return val, nil
+		}
+		lastErr = err
+		if !errors.Is(err, redis.Nil) {
+			log.Printf("verify upload redis lookup failed for %s on attempt %d: %v", uploadToken, i+1, err)
+		}
+		time.Sleep(delay)
+	}
+
+	log.Printf("verify upload token still unavailable after retries: token=%s err=%v", uploadToken, lastErr)
+	return "", lastErr
 }
 
 func generateCode() (string, error) {
