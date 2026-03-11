@@ -341,10 +341,17 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 		Token:         session.Token,
 		SignedS3Key:   signedKey,
 		SignedPDFSHA:  sha256Hex(signedPdf),
-		CertSHA:       sha256Hex(certPEM),
+		CertSHA:       certificatePEMSHA256(string(certPEM)),
 		SignerSubject: extractCertificateSubject(certPEM, session.Email),
 		SignedAt:      now,
 	}
+	log.Printf(
+		"signed document persisted candidate: token=%s signedKey=%s signedPdfSha=%s certSha=%s",
+		session.Token,
+		signedKey,
+		signedDoc.SignedPDFSHA,
+		signedDoc.CertSHA,
+	)
 	if err := db.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "signed_s3_key"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
@@ -416,7 +423,8 @@ func handleVerifyByToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	statusCode, verification, err := verifyServiceOwnedPDF(pdfBytes)
+	log.Printf("verify by token: token=%s signedKey=%s pdfSha=%s", req.Token, session.SignedS3Key, sha256Hex(pdfBytes))
+	statusCode, verification, err := verifyStoredServicePDF(pdfBytes, req.Token, session.SignedS3Key)
 	if err != nil {
 		log.Printf("pdf verification error: %v", err)
 		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "verification service failed"))
@@ -445,6 +453,7 @@ func handleVerifyByUploadToken(w http.ResponseWriter, uploadToken string) {
 		return
 	}
 
+	log.Printf("verify by upload token: uploadToken=%s objectKey=%s pdfSha=%s", uploadToken, meta.S3Key, sha256Hex(pdfBytes))
 	statusCode, verification, err := verifyServiceOwnedPDF(pdfBytes)
 	if err != nil {
 		log.Printf("pdf verification error: %v", err)
@@ -591,16 +600,28 @@ func verifyPDFViaService(pdfVerifyURL string, pdfBytes []byte) (int, []byte, err
 
 func verifyServiceOwnedPDF(pdfBytes []byte) (int, VerificationResult, error) {
 	documentHash := sha256Hex(pdfBytes)
+	log.Printf("verify uploaded pdf: documentHash=%s", documentHash)
 
 	var signedDoc SignedDocument
 	result := db.First(&signedDoc, "signed_pdfsha = ?", documentHash)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			log.Printf("verify uploaded pdf: no signed_documents match for hash=%s, falling back to certificate fingerprint", documentHash)
 			return verifyServiceOwnedByCertificate(pdfBytes)
 		}
 		return 0, VerificationResult{}, result.Error
 	}
+	log.Printf("verify uploaded pdf: matched signed_documents record token=%s signedKey=%s hash=%s", signedDoc.Token, signedDoc.SignedS3Key, documentHash)
 
+	return verifyViaPDFService(pdfBytes, true, "uploaded PDF matched signed_documents registry")
+}
+
+func verifyStoredServicePDF(pdfBytes []byte, token, signedS3Key string) (int, VerificationResult, error) {
+	log.Printf("verify stored service pdf: token=%s signedKey=%s pdfSha=%s", token, signedS3Key, sha256Hex(pdfBytes))
+	return verifyViaPDFService(pdfBytes, true, "stored service PDF verified via token lookup")
+}
+
+func verifyViaPDFService(pdfBytes []byte, serviceOwned bool, logPrefix string) (int, VerificationResult, error) {
 	statusCode, respBody, err := verifyPDFViaService(derivePDFVerifyURL(appCfg.PDFSignURL), pdfBytes)
 	if err != nil {
 		return 0, VerificationResult{}, err
@@ -616,7 +637,15 @@ func verifyServiceOwnedPDF(pdfBytes []byte) (int, VerificationResult, error) {
 	if err := json.Unmarshal(respBody, &verification); err != nil {
 		return 0, VerificationResult{}, err
 	}
-	verification.ServiceOwned = true
+	verification.ServiceOwned = serviceOwned
+	log.Printf(
+		"%s: status=%s signaturePresent=%t integrityValid=%t certSha=%v",
+		logPrefix,
+		verification.Status,
+		verification.SignaturePresent,
+		verification.IntegrityValid,
+		verification.CertificateSHA256,
+	)
 	return http.StatusOK, verification, nil
 }
 
@@ -636,6 +665,13 @@ func verifyServiceOwnedByCertificate(pdfBytes []byte) (int, VerificationResult, 
 	if err := json.Unmarshal(respBody, &verification); err != nil {
 		return 0, VerificationResult{}, err
 	}
+	log.Printf(
+		"verify fallback via certificate: status=%s signaturePresent=%t integrityValid=%t certSha=%v",
+		verification.Status,
+		verification.SignaturePresent,
+		verification.IntegrityValid,
+		verification.CertificateSHA256,
+	)
 
 	if verification.CertificateSHA256 != nil {
 		var sessions []SigningSession
