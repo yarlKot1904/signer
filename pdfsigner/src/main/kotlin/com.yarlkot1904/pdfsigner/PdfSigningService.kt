@@ -13,7 +13,6 @@ import org.bouncycastle.asn1.pkcs.PrivateKeyInfo
 import org.bouncycastle.cert.X509CertificateHolder
 import org.bouncycastle.cert.jcajce.JcaCertStore
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
-import org.bouncycastle.cert.jcajce.JcaX509CertificateHolder
 import org.bouncycastle.cms.CMSProcessableByteArray
 import org.bouncycastle.cms.CMSSignedData
 import org.bouncycastle.cms.CMSSignedDataGenerator
@@ -26,6 +25,7 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder
 import org.bouncycastle.util.Selector
 import org.bouncycastle.util.Store
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -64,6 +64,8 @@ data class VerificationResult(
 
 @Service
 class PdfSigningService {
+    private val logger = LoggerFactory.getLogger(PdfSigningService::class.java)
+
     init {
         if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
             Security.addProvider(BouncyCastleProvider())
@@ -76,6 +78,11 @@ class PdfSigningService {
 
         PDDocument.load(ByteArrayInputStream(pdfBytes)).use { doc ->
             require(doc.numberOfPages > 0) { "PDF has no pages" }
+            logger.info(
+                "Starting PDF signing: pages={}, subject={}",
+                doc.numberOfPages,
+                cert.subjectX500Principal.name
+            )
 
             stampLastPage(doc, cert)
 
@@ -96,6 +103,11 @@ class PdfSigningService {
                 doc.saveIncremental(out)
             }
 
+            logger.info(
+                "Finished PDF signing: pages={}, outputBytes={}",
+                doc.numberOfPages,
+                out.size()
+            )
             return out.toByteArray()
         }
     }
@@ -103,6 +115,7 @@ class PdfSigningService {
     fun verifyPdf(pdfBytes: ByteArray): VerificationResult {
         PDDocument.load(ByteArrayInputStream(pdfBytes)).use { doc ->
             val signatures = doc.signatureDictionaries
+            logger.info("Verifying PDF: pages={}, signatures={}", doc.numberOfPages, signatures.size)
             if (signatures.isEmpty()) {
                 return VerificationResult(
                     status = "unsigned",
@@ -133,6 +146,13 @@ class PdfSigningService {
             )
 
             val subject = cert.subjectX500Principal.name
+            val certHash = sha256Hex(cert.encoded)
+            logger.info(
+                "Verification result: integrityValid={}, subject={}, certSha256={}",
+                integrityValid,
+                subject,
+                certHash
+            )
             return VerificationResult(
                 status = if (integrityValid) "verified" else "invalid_signature",
                 signaturePresent = true,
@@ -141,7 +161,7 @@ class PdfSigningService {
                 signerCn = extractEmailFromSubject(subject) ?: extractCn(subject),
                 signingTime = signature.signDate?.toInstant()?.toString(),
                 certificateSelfSigned = isSelfSigned(cert),
-                certificateSha256 = sha256Hex(cert.encoded),
+                certificateSha256 = certHash,
                 certificateTrusted = null,
                 error = if (integrityValid) null else "Signature integrity check failed"
             )
@@ -164,9 +184,9 @@ class PdfSigningService {
         val email = extractEmailFromSubject(cert.subjectX500Principal.name) ?: cert.subjectX500Principal.name
         val dateStr = Instant.now().toString()
 
-        val title = "Документ подписан электронной подписью"
+        val title = "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u043f\u043e\u0434\u043f\u0438\u0441\u0430\u043d \u044d\u043b\u0435\u043a\u0442\u0440\u043e\u043d\u043d\u043e\u0439 \u043f\u043e\u0434\u043f\u0438\u0441\u044c\u044e"
         val line1 = "Email: $email"
-        val line2 = "Дата: $dateStr"
+        val line2 = "\u0414\u0430\u0442\u0430: $dateStr"
 
         val padding = 10f
         val blockWidth = 380f
@@ -175,6 +195,15 @@ class PdfSigningService {
         val margin = 24f
         val x = (box.lowerLeftX + box.width - blockWidth - margin).coerceAtLeast(box.lowerLeftX + margin)
         val y = (box.lowerLeftY + margin).coerceAtLeast(box.lowerLeftY + margin)
+        logger.info(
+            "Stamping last page: pageIndex={}, x={}, y={}, width={}, height={}, email={}",
+            doc.numberOfPages - 1,
+            x,
+            y,
+            blockWidth,
+            blockHeight,
+            email
+        )
 
         val fontRegular = loadFont(doc, "fonts/DejaVuSans.ttf")
         val fontBold = loadFont(doc, "fonts/DejaVuSans-Bold.ttf")
