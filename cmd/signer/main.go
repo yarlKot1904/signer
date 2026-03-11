@@ -831,7 +831,7 @@ func certificatePEMSHA256(certPEM string) string {
 }
 
 func cleanupVerifyUpload(uploadToken, objectKey string) {
-	if err := infra.DeleteObject(appCtx, s3Client, appCfg.MinioBucket, objectKey); err != nil {
+	if err := deleteVerifyArtifacts(appCtx, s3Client, appCfg.MinioBucket, objectKey); err != nil {
 		log.Printf("Verify upload delete failed for %s: %v", objectKey, err)
 	}
 	if err := redisDB.Del(appCtx, "verify:"+uploadToken).Err(); err != nil {
@@ -840,4 +840,17 @@ func cleanupVerifyUpload(uploadToken, objectKey string) {
 	if err := redisDB.ZRem(appCtx, verifyCleanupZSetKey, objectKey).Err(); err != nil {
 		log.Printf("Verify upload cleanup zset remove failed for %s: %v", objectKey, err)
 	}
+}
+
+func deleteVerifyArtifacts(ctx context.Context, s3c *s3.Client, bucket, objectKey string) error {
+	if err := infra.DeleteObject(ctx, s3c, bucket, objectKey); err != nil {
+		return err
+	}
+
+	infoKey := objectKey + ".info"
+	if err := infra.DeleteObject(ctx, s3c, bucket, infoKey); err != nil {
+		log.Printf("Verify upload .info delete skipped for %s: %v", infoKey, err)
+	}
+
+	return nil
 }

@@ -274,7 +274,7 @@ func cleanupExpiredVerifyObjects(ctx context.Context, s3Client *s3.Client, bucke
 	}
 
 	for _, key := range keys {
-		if err := infra.DeleteObject(ctx, s3Client, bucket, key); err != nil {
+		if err := deleteVerifyArtifacts(ctx, s3Client, bucket, key); err != nil {
 			log.Printf("Verify cleanup delete failed for %s: %v", key, err)
 			continue
 		}
@@ -283,4 +283,17 @@ func cleanupExpiredVerifyObjects(ctx context.Context, s3Client *s3.Client, bucke
 		}
 		log.Printf("Deleted expired verify object: %s", key)
 	}
+}
+
+func deleteVerifyArtifacts(ctx context.Context, s3Client *s3.Client, bucket, key string) error {
+	if err := infra.DeleteObject(ctx, s3Client, bucket, key); err != nil {
+		return err
+	}
+
+	infoKey := key + ".info"
+	if err := infra.DeleteObject(ctx, s3Client, bucket, infoKey); err != nil {
+		log.Printf("Verify cleanup .info delete skipped for %s: %v", infoKey, err)
+	}
+
+	return nil
 }
