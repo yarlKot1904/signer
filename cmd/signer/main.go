@@ -312,7 +312,7 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	signedPdf, err := signPDFViaService(appCfg.PDFSignURL, pdfBytes, certPEM, keyPEM)
+	signedPdf, err := signPDFViaService(appCfg.PDFSignURL, pdfBytes, certPEM, keyPEM, session.Token)
 	if err != nil {
 		log.Printf("pdfsigner error: %v", err)
 		http.Error(w, `{"error":"PDF signing failed"}`, http.StatusInternalServerError)
@@ -538,7 +538,7 @@ func generateSelfSignedCertPEM(email string, priv *rsa.PrivateKey) ([]byte, []by
 	return certPEM, keyPEM, nil
 }
 
-func signPDFViaService(pdfSignURL string, pdfBytes, certPEM, keyPEM []byte) ([]byte, error) {
+func signPDFViaService(pdfSignURL string, pdfBytes, certPEM, keyPEM []byte, documentID string) ([]byte, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
@@ -558,6 +558,9 @@ func signPDFViaService(pdfSignURL string, pdfBytes, certPEM, keyPEM []byte) ([]b
 		return nil, err
 	}
 	if err := w.WriteField("keyPem", string(keyPEM)); err != nil {
+		return nil, err
+	}
+	if err := w.WriteField("documentId", documentID); err != nil {
 		return nil, err
 	}
 	if err := w.Close(); err != nil {

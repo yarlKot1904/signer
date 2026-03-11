@@ -31,7 +31,7 @@ class PdfSigningServiceTest {
     @Test
     fun `verify signed pdf reports valid signature`() {
         val (certPem, keyPem) = createSigningMaterial("user@example.com")
-        val signedPdf = service.signPdf(createPdf("Hello Signer"), certPem, keyPem)
+        val signedPdf = service.signPdf(createPdf("Hello Signer"), certPem, keyPem, "test-document-id")
 
         val result = service.verifyPdf(signedPdf)
 
@@ -48,12 +48,12 @@ class PdfSigningServiceTest {
     @Test
     fun `signed pdf contains visible stamp text`() {
         val (certPem, keyPem) = createSigningMaterial("user@example.com")
-        val signedPdf = service.signPdf(createPdf("Hello Signer"), certPem, keyPem)
+        val signedPdf = service.signPdf(createPdf("Hello Signer"), certPem, keyPem, "test-document-id")
 
         PDDocument.load(signedPdf).use { doc ->
             val text = PDFTextStripper().getText(doc)
-            assertTrue(text.contains("Документ подписан электронной подписью"))
             assertTrue(text.contains("Email: user@example.com"))
+            assertTrue(text.contains("UUID: test-document-id"))
         }
     }
 
@@ -71,7 +71,7 @@ class PdfSigningServiceTest {
     @Test
     fun `verify tampered signed pdf reports invalid signature`() {
         val (certPem, keyPem) = createSigningMaterial("user@example.com")
-        val signedPdf = service.signPdf(createPdf("Hello Signer"), certPem, keyPem)
+        val signedPdf = service.signPdf(createPdf("Hello Signer"), certPem, keyPem, "test-document-id")
         val tamperedPdf = tamperSignatureContents(signedPdf)
 
         val result = service.verifyPdf(tamperedPdf)

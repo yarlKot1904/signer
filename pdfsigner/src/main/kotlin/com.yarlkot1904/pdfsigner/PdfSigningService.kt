@@ -73,7 +73,7 @@ class PdfSigningService {
         }
     }
 
-    fun signPdf(pdfBytes: ByteArray, certPem: String, keyPem: String): ByteArray {
+    fun signPdf(pdfBytes: ByteArray, certPem: String, keyPem: String, documentId: String): ByteArray {
         val cert = parseX509FromPem(certPem)
         val key = parsePrivateKeyFromPem(keyPem)
 
@@ -85,7 +85,7 @@ class PdfSigningService {
                 cert.subjectX500Principal.name
             )
 
-            stampLastPage(doc, cert)
+            stampLastPage(doc, cert, documentId)
             val stampedOut = ByteArrayOutputStream()
             doc.save(stampedOut)
             val stampedPdf = stampedOut.toByteArray()
@@ -99,7 +99,7 @@ class PdfSigningService {
                 logger.info(
                     "Stamped PDF text probe: lastPageContainsTitle={}, lastPageContainsEmail={}",
                     extractedText.contains("Документ подписан электронной подписью"),
-                    extractedText.contains(emailForLog(cert))
+                        extractedText.contains(emailForLog(cert))
                 )
 
                 val signature = PDSignature().apply {
@@ -197,7 +197,7 @@ class PdfSigningService {
     private fun emailForLog(cert: X509Certificate): String =
         extractEmailFromSubject(cert.subjectX500Principal.name) ?: cert.subjectX500Principal.name
 
-    private fun stampLastPage(doc: PDDocument, cert: X509Certificate) {
+    private fun stampLastPage(doc: PDDocument, cert: X509Certificate, documentId: String) {
         val page = doc.getPage(doc.numberOfPages - 1)
         val box = page.cropBox ?: page.mediaBox
 
@@ -207,22 +207,24 @@ class PdfSigningService {
         val title = "\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442 \u043f\u043e\u0434\u043f\u0438\u0441\u0430\u043d \u044d\u043b\u0435\u043a\u0442\u0440\u043e\u043d\u043d\u043e\u0439 \u043f\u043e\u0434\u043f\u0438\u0441\u044c\u044e"
         val line1 = "Email: $email"
         val line2 = "\u0414\u0430\u0442\u0430: $dateStr"
+        val line3 = "UUID: $documentId"
 
-        val padding = 12f
+        val padding = 10f
         val blockWidth = minOf(420f, box.width - 48f)
-        val blockHeight = 92f
+        val blockHeight = 102f
 
         val margin = 24f
         val x = (box.lowerLeftX + box.width - blockWidth - margin).coerceAtLeast(box.lowerLeftX + margin)
-        val y = (box.lowerLeftY + box.height - blockHeight - margin).coerceAtLeast(box.lowerLeftY + margin)
+        val y = (box.lowerLeftY + margin).coerceAtLeast(box.lowerLeftY + margin)
         logger.info(
-            "Stamping last page: pageIndex={}, x={}, y={}, width={}, height={}, email={}",
+            "Stamping last page: pageIndex={}, x={}, y={}, width={}, height={}, email={}, documentId={}",
             doc.numberOfPages - 1,
             x,
             y,
             blockWidth,
             blockHeight,
-            email
+            email,
+            documentId
         )
 
         val fontRegular = loadFont(doc, "fonts/DejaVuSans.ttf")
@@ -230,13 +232,9 @@ class PdfSigningService {
 
         PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
             cs.saveGraphicsState()
-            cs.setNonStrokingColor(255, 248, 230)
-            cs.addRect(x, y, blockWidth, blockHeight)
-            cs.fill()
-
-            cs.setStrokingColor(176, 52, 34)
-            cs.setNonStrokingColor(33, 37, 41)
-            cs.setLineWidth(1.5f)
+            cs.setStrokingColor(0, 0, 0)
+            cs.setNonStrokingColor(0, 0, 0)
+            cs.setLineWidth(1f)
             cs.addRect(x, y, blockWidth, blockHeight)
             cs.stroke()
 
@@ -251,9 +249,10 @@ class PdfSigningService {
                 }
             }
 
-            drawLine(title, fontBold, 12f, 14f)
-            drawLine(line1, fontRegular, 10f, 38f)
-            drawLine(line2, fontRegular, 10f, 56f)
+            drawLine(title, fontBold, 11f, 12f)
+            drawLine(line1, fontRegular, 10f, 32f)
+            drawLine(line2, fontRegular, 10f, 48f)
+            drawLine(line3, fontRegular, 10f, 64f)
             cs.restoreGraphicsState()
         }
     }
