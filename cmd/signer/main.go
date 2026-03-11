@@ -35,6 +35,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const MaxAttempts = 3
@@ -329,15 +330,34 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 	session.CertPEM = string(certPEM)
 	session.SignedS3Key = signedKey
 	session.SignedAt = &now
-	_ = db.Save(&session).Error
-	_ = db.Create(&SignedDocument{
+	if err := db.Save(&session).Error; err != nil {
+		log.Printf("DB save session error: %v", err)
+		http.Error(w, `{"error":"Failed to persist signing session"}`, http.StatusInternalServerError)
+		return
+	}
+
+	signedDoc := SignedDocument{
 		Token:         session.Token,
 		SignedS3Key:   signedKey,
 		SignedPDFSHA:  sha256Hex(signedPdf),
 		CertSHA:       sha256Hex(certPEM),
 		SignerSubject: extractCertificateSubject(certPEM, session.Email),
 		SignedAt:      now,
-	}).Error
+	}
+	if err := db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "signed_s3_key"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"token":          signedDoc.Token,
+			"signed_pdf_sha": signedDoc.SignedPDFSHA,
+			"cert_sha":       signedDoc.CertSHA,
+			"signer_subject": signedDoc.SignerSubject,
+			"signed_at":      signedDoc.SignedAt,
+		}),
+	}).Create(&signedDoc).Error; err != nil {
+		log.Printf("DB save signed document error: %v", err)
+		http.Error(w, `{"error":"Failed to persist signed document metadata"}`, http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
