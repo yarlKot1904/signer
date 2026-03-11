@@ -6,6 +6,7 @@ import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.font.PDFont
 import org.apache.pdfbox.pdmodel.font.PDType0Font
+import org.apache.pdfbox.text.PDFTextStripper
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureInterface
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureOptions
@@ -85,30 +86,46 @@ class PdfSigningService {
             )
 
             stampLastPage(doc, cert)
+            val stampedOut = ByteArrayOutputStream()
+            doc.save(stampedOut)
+            val stampedPdf = stampedOut.toByteArray()
+            logger.info("Stamped PDF prepared before signing: bytes={}", stampedPdf.size)
 
-            val signature = PDSignature().apply {
-                setFilter(PDSignature.FILTER_ADOBE_PPKLITE)
-                setSubFilter(PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED)
-                setName(cert.subjectX500Principal.name)
-                setReason("Document signed")
-                setLocation("CryptoSigner")
-                setSignDate(Calendar.getInstance())
+            PDDocument.load(ByteArrayInputStream(stampedPdf)).use { stampedDoc ->
+                val extractedText = PDFTextStripper().apply {
+                    startPage = stampedDoc.numberOfPages
+                    endPage = stampedDoc.numberOfPages
+                }.getText(stampedDoc)
+                logger.info(
+                    "Stamped PDF text probe: lastPageContainsTitle={}, lastPageContainsEmail={}",
+                    extractedText.contains("Документ подписан электронной подписью"),
+                    extractedText.contains(emailForLog(cert))
+                )
+
+                val signature = PDSignature().apply {
+                    setFilter(PDSignature.FILTER_ADOBE_PPKLITE)
+                    setSubFilter(PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED)
+                    setName(cert.subjectX500Principal.name)
+                    setReason("Document signed")
+                    setLocation("CryptoSigner")
+                    setSignDate(Calendar.getInstance())
+                }
+
+                val signer = CmsSigner(key, cert)
+                val out = ByteArrayOutputStream()
+                SignatureOptions().use { opts ->
+                    opts.preferredSignatureSize = 200_000
+                    stampedDoc.addSignature(signature, signer, opts)
+                    stampedDoc.saveIncremental(out)
+                }
+
+                logger.info(
+                    "Finished PDF signing: pages={}, outputBytes={}",
+                    stampedDoc.numberOfPages,
+                    out.size()
+                )
+                return out.toByteArray()
             }
-
-            val signer = CmsSigner(key, cert)
-            val out = ByteArrayOutputStream()
-            SignatureOptions().use { opts ->
-                opts.preferredSignatureSize = 200_000
-                doc.addSignature(signature, signer, opts)
-                doc.saveIncremental(out)
-            }
-
-            logger.info(
-                "Finished PDF signing: pages={}, outputBytes={}",
-                doc.numberOfPages,
-                out.size()
-            )
-            return out.toByteArray()
         }
     }
 
@@ -176,6 +193,9 @@ class PdfSigningService {
 
     private fun extractCn(subject: String): String? =
         Regex("""CN=([^,]+)""").find(subject)?.groupValues?.getOrNull(1)?.trim()
+
+    private fun emailForLog(cert: X509Certificate): String =
+        extractEmailFromSubject(cert.subjectX500Principal.name) ?: cert.subjectX500Principal.name
 
     private fun stampLastPage(doc: PDDocument, cert: X509Certificate) {
         val page = doc.getPage(doc.numberOfPages - 1)
