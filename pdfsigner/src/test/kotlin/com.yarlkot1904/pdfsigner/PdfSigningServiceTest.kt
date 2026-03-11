@@ -4,6 +4,7 @@ import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.text.PDFTextStripper
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
@@ -42,6 +43,18 @@ class PdfSigningServiceTest {
         assertEquals(true, result.certificateSelfSigned)
         assertNotNull(result.signingTime)
         assertEquals(null, result.error)
+    }
+
+    @Test
+    fun `signed pdf contains visible stamp text`() {
+        val (certPem, keyPem) = createSigningMaterial("user@example.com")
+        val signedPdf = service.signPdf(createPdf("Hello Signer"), certPem, keyPem)
+
+        PDDocument.load(signedPdf).use { doc ->
+            val text = PDFTextStripper().getText(doc)
+            assertTrue(text.contains("Документ подписан электронной подписью"))
+            assertTrue(text.contains("Email: user@example.com"))
+        }
     }
 
     @Test
