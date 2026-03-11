@@ -95,16 +95,22 @@ Input modes:
 }
 ```
 
-#### Multipart upload mode
+#### JSON upload-token mode
 
-- content type: `multipart/form-data`
-- field name: `pdf`
+```json
+{
+  "upload_token": "uuid"
+}
+```
+
+`upload_token` is produced by the browser flow after a Tus upload to `/verify-files/`.
 
 Response shape:
 
 ```json
 {
   "status": "verified | unsigned | invalid_signature | error",
+  "service_owned": true,
   "signature_present": true,
   "integrity_valid": true,
   "signer_subject": "CN=user@example.com,O=CryptoSigner Demo",
@@ -120,9 +126,12 @@ Field meaning:
 
 - `status`
   - `verified`: signature exists and integrity check passed
+  - `unknown_document`: file is not a signed artifact issued by this service
   - `unsigned`: no signature found
   - `invalid_signature`: signature exists but failed integrity verification
   - `error`: request or internal processing error
+- `service_owned`
+  - `true` only when the PDF is recognized as an artifact signed and stored by this service
 - `signature_present`
   - `true` if the PDF contains an embedded signature dictionary
 - `integrity_valid`
@@ -142,8 +151,8 @@ Field meaning:
 
 Responses:
 
-- `200` verification result, including unsigned or invalid-signature documents
-- `400` bad JSON, bad multipart payload, missing token, missing file, or malformed PDF upload
+- `200` verification result, including `unknown_document`, unsigned, or invalid-signature documents
+- `400` bad JSON or missing token/upload token
 - `404` token not found, expired token, or missing signed artifact in token mode
 - `500` internal storage, lookup, or downstream verification failure
 
@@ -157,7 +166,8 @@ curl.exe -s -X POST http://localhost/api/verify `
 
 ```powershell
 curl.exe -s -X POST http://localhost/api/verify `
-  -F "pdf=@C:\path\to\signed.pdf;type=application/pdf"
+  -H "Content-Type: application/json" `
+  -d "{\"upload_token\":\"<upload-token>\"}"
 ```
 
 ## Internal pdfsigner Routes
