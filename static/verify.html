@@ -358,6 +358,8 @@
         switch (data.status) {
             case 'verified':
                 return 'Подпись валидна.';
+            case 'unknown_document':
+                return 'Документ не найден в реестре сервиса.';
             case 'unsigned':
                 return 'Подпись не найдена.';
             case 'invalid_signature':
