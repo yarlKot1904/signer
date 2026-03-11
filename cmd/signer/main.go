@@ -644,8 +644,11 @@ func verifyServiceOwnedByCertificate(pdfBytes []byte) (int, VerificationResult, 
 		}
 
 		for _, session := range sessions {
-			if sha256Hex([]byte(session.CertPEM)) == *verification.CertificateSHA256 {
+			sessionCertHash := certificatePEMSHA256(session.CertPEM)
+			log.Printf("verify fallback: token=%s sessionCertHash=%s uploadedCertHash=%s", session.Token, sessionCertHash, *verification.CertificateSHA256)
+			if sessionCertHash != "" && sessionCertHash == *verification.CertificateSHA256 {
 				verification.ServiceOwned = true
+				log.Printf("verify fallback matched session token=%s by certificate fingerprint", session.Token)
 				return http.StatusOK, verification, nil
 			}
 		}
@@ -754,6 +757,14 @@ func extractCertificateSubject(certPEM []byte, fallback string) string {
 		return fallback
 	}
 	return cert.Subject.String()
+}
+
+func certificatePEMSHA256(certPEM string) string {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return ""
+	}
+	return sha256Hex(block.Bytes)
 }
 
 func cleanupVerifyUpload(uploadToken, objectKey string) {
