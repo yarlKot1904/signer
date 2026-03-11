@@ -82,6 +82,7 @@ type VerificationResult struct {
 	SignerCN              *string `json:"signer_cn"`
 	SigningTime           *string `json:"signing_time"`
 	CertificateSelfSigned *bool   `json:"certificate_self_signed"`
+	CertificateSHA256     *string `json:"certificate_sha256"`
 	CertificateTrusted    *bool   `json:"certificate_trusted"`
 	Error                 *string `json:"error"`
 }
@@ -593,17 +594,10 @@ func verifyServiceOwnedPDF(pdfBytes []byte) (int, VerificationResult, error) {
 
 	var signedDoc SignedDocument
 	result := db.First(&signedDoc, "signed_pdfsha = ?", documentHash)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		msg := "document is not signed by this service"
-		return http.StatusOK, VerificationResult{
-			Status:           "unknown_document",
-			ServiceOwned:     false,
-			SignaturePresent: false,
-			IntegrityValid:   false,
-			Error:            &msg,
-		}, nil
-	}
 	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return verifyServiceOwnedByCertificate(pdfBytes)
+		}
 		return 0, VerificationResult{}, result.Error
 	}
 
@@ -624,6 +618,53 @@ func verifyServiceOwnedPDF(pdfBytes []byte) (int, VerificationResult, error) {
 	}
 	verification.ServiceOwned = true
 	return http.StatusOK, verification, nil
+}
+
+func verifyServiceOwnedByCertificate(pdfBytes []byte) (int, VerificationResult, error) {
+	statusCode, respBody, err := verifyPDFViaService(derivePDFVerifyURL(appCfg.PDFSignURL), pdfBytes)
+	if err != nil {
+		return 0, VerificationResult{}, err
+	}
+	if statusCode == http.StatusBadRequest {
+		return http.StatusInternalServerError, verificationError("error", "stored signed PDF could not be verified"), nil
+	}
+	if statusCode != http.StatusOK {
+		return http.StatusInternalServerError, verificationError("error", "verification service returned an unexpected response"), nil
+	}
+
+	var verification VerificationResult
+	if err := json.Unmarshal(respBody, &verification); err != nil {
+		return 0, VerificationResult{}, err
+	}
+
+	if verification.CertificateSHA256 != nil {
+		var sessions []SigningSession
+		if err := db.Where("cert_pem IS NOT NULL AND cert_pem <> ''").Find(&sessions).Error; err != nil {
+			return 0, VerificationResult{}, err
+		}
+
+		for _, session := range sessions {
+			if sha256Hex([]byte(session.CertPEM)) == *verification.CertificateSHA256 {
+				verification.ServiceOwned = true
+				return http.StatusOK, verification, nil
+			}
+		}
+	}
+
+	msg := "document is not signed by this service"
+	return http.StatusOK, VerificationResult{
+		Status:                "unknown_document",
+		ServiceOwned:          false,
+		SignaturePresent:      verification.SignaturePresent,
+		IntegrityValid:        verification.IntegrityValid,
+		SignerSubject:         verification.SignerSubject,
+		SignerCN:              verification.SignerCN,
+		SigningTime:           verification.SigningTime,
+		CertificateSelfSigned: verification.CertificateSelfSigned,
+		CertificateSHA256:     verification.CertificateSHA256,
+		CertificateTrusted:    verification.CertificateTrusted,
+		Error:                 &msg,
+	}, nil
 }
 
 func derivePDFVerifyURL(pdfSignURL string) string {
