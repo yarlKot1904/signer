@@ -179,7 +179,7 @@ class PdfSigningService {
 
     private fun stampLastPage(doc: PDDocument, cert: X509Certificate) {
         val page = doc.getPage(doc.numberOfPages - 1)
-        val box = page.mediaBox
+        val box = page.cropBox ?: page.mediaBox
 
         val email = extractEmailFromSubject(cert.subjectX500Principal.name) ?: cert.subjectX500Principal.name
         val dateStr = Instant.now().toString()
@@ -188,9 +188,9 @@ class PdfSigningService {
         val line1 = "Email: $email"
         val line2 = "\u0414\u0430\u0442\u0430: $dateStr"
 
-        val padding = 10f
-        val blockWidth = 380f
-        val blockHeight = 82f
+        val padding = 12f
+        val blockWidth = minOf(420f, box.width - 48f)
+        val blockHeight = 92f
 
         val margin = 24f
         val x = (box.lowerLeftX + box.width - blockWidth - margin).coerceAtLeast(box.lowerLeftX + margin)
@@ -209,13 +209,14 @@ class PdfSigningService {
         val fontBold = loadFont(doc, "fonts/DejaVuSans-Bold.ttf")
 
         PDPageContentStream(doc, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
-            cs.setNonStrokingColor(255, 255, 255)
+            cs.saveGraphicsState()
+            cs.setNonStrokingColor(255, 248, 230)
             cs.addRect(x, y, blockWidth, blockHeight)
             cs.fill()
 
-            cs.setStrokingColor(33, 37, 41)
+            cs.setStrokingColor(176, 52, 34)
             cs.setNonStrokingColor(33, 37, 41)
-            cs.setLineWidth(1f)
+            cs.setLineWidth(1.5f)
             cs.addRect(x, y, blockWidth, blockHeight)
             cs.stroke()
 
@@ -230,9 +231,10 @@ class PdfSigningService {
                 }
             }
 
-            drawLine(title, fontBold, 11f, 12f)
-            drawLine(line1, fontRegular, 10f, 32f)
-            drawLine(line2, fontRegular, 10f, 48f)
+            drawLine(title, fontBold, 12f, 14f)
+            drawLine(line1, fontRegular, 10f, 38f)
+            drawLine(line2, fontRegular, 10f, 56f)
+            cs.restoreGraphicsState()
         }
     }
 
