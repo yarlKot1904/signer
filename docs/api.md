@@ -104,6 +104,7 @@ Input modes:
 ```
 
 `upload_token` is produced by the browser flow after a Tus upload to `/verify-files/`.
+The verify-upload path uses temporary MinIO objects under `verify/...`; both the object and its `.info` sidecar are deleted after verification or TTL cleanup.
 
 Response shape:
 
@@ -191,6 +192,7 @@ Multipart fields:
 - `pdf`: PDF bytes
 - `certPem`: signer certificate PEM
 - `keyPem`: signer private key PEM
+- `documentId`: signer token/UUID used in the visible stamp
 
 Returns:
 

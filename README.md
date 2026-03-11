@@ -30,6 +30,7 @@ It accepts one PDF upload, issues a temporary token, creates an OTP-backed signi
 6. `signer` generates a self-signed certificate and private key, asks `pdfsigner` to sign the PDF, and stores the signed result in MinIO.
 7. `downloader` serves the original or signed file by token.
 8. `signer` exposes `POST /api/verify`, which delegates cryptographic verification to `pdfsigner`.
+9. Verify uploads use temporary MinIO objects under `verify/...`; both the object and its Tus `.info` sidecar are deleted after verification or TTL cleanup.
 
 ## Quick Start
 
@@ -88,6 +89,7 @@ See [docs/api.md](docs/api.md) for request and response details.
   - Bucket: `docs-storage`
   - Original object key: `YYYY/MM/<tus-key>`
   - Signed object key: `signed/YYYY/MM/<tus-key>`
+  - Temporary verify key: `verify/YYYY/MM/<tus-key>`
 - RabbitMQ
   - Queue: `signer.tasks`
   - Message: `{ "token": "...", "email": "...", "s3_key": "..." }`

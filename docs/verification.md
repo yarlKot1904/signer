@@ -26,6 +26,14 @@ curl.exe -s -X POST http://localhost/api/verify `
 
 Browser UI `/verify.html` uploads PDFs through Tus to `/verify-files/`, then calls `POST /api/verify` with an internal `upload_token`.
 
+Verify uploads are temporary:
+
+- uploader stores them in MinIO under `verify/YYYY/MM/...`
+- uploader stores `verify:<upload_token>` in Redis with TTL 1 hour
+- signer waits briefly for the verify token metadata to appear to avoid Tus completion races
+- after verification, the temporary object and its `.info` sidecar are deleted from MinIO
+- uploader also runs TTL-based cleanup for expired verify objects and their `.info` sidecars
+
 Important:
 
 - verification only succeeds for PDFs signed by this service
@@ -65,6 +73,7 @@ Notes:
 
 - `certificate_trusted` is always `null` in this prototype. The system does not perform external CA trust-chain validation.
 - `certificate_self_signed=true` is expected for PDFs signed by this project.
+- signed PDFs issued by this system include a visible bottom-page stamp with email, signing time, and the document UUID/token
 
 ## End-to-end verification steps
 

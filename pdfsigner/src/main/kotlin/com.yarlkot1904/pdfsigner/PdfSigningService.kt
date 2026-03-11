@@ -15,6 +15,7 @@ import org.bouncycastle.cert.X509CertificateHolder
 import org.bouncycastle.cert.jcajce.JcaCertStore
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cms.CMSProcessableByteArray
+import org.bouncycastle.cms.CMSException
 import org.bouncycastle.cms.CMSSignedData
 import org.bouncycastle.cms.CMSSignedDataGenerator
 import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder
@@ -144,7 +145,15 @@ class PdfSigningService {
             val signature = signatures.first()
             val contents = signature.getContents(pdfBytes)
             val signedContent = signature.getSignedContent(pdfBytes)
-            val cms = CMSSignedData(CMSProcessableByteArray(signedContent), contents)
+            val cms = try {
+                CMSSignedData(CMSProcessableByteArray(signedContent), contents)
+            } catch (e: CMSException) {
+                logger.warn("Failed to parse CMS signature payload", e)
+                return invalidSignature(signature, "Malformed CMS signature content")
+            } catch (e: IllegalArgumentException) {
+                logger.warn("Failed to decode CMS signature payload", e)
+                return invalidSignature(signature, "Malformed CMS signature content")
+            }
             val signerInfo = cms.signerInfos.signers.firstOrNull()
                 ?: return invalidSignature(signature, "No signer info present")
 
