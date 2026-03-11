@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Проверка PDF | Signer</title>
+    <style>
+        :root {
+            --bg: #f4f7f6;
+            --panel: #ffffff;
+            --text: #1f2933;
+            --muted: #6b7280;
+            --border: #d9e2ec;
+            --accent: #2ea7e0;
+            --accent-dark: #147bb0;
+            --success-bg: #e8f5e9;
+            --success-text: #2e7d32;
+            --error-bg: #ffebee;
+            --error-text: #c62828;
+            --warning-bg: #fff8e1;
+            --warning-text: #8d6e00;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        .page {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .hero {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .hero h1 {
+            margin: 0 0 10px;
+            font-size: 2rem;
+        }
+
+        .hero p {
+            margin: 0;
+            color: var(--muted);
+            max-width: 680px;
+            line-height: 1.5;
+        }
+
+        .hero a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .hero a:hover { text-decoration: underline; }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 24px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+            padding: 24px;
+        }
+
+        .modes {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .mode-btn {
+            flex: 1;
+            border: 1px solid var(--border);
+            background: #f8fafc;
+            color: var(--text);
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .mode-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        .field {
+            margin-bottom: 18px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.92rem;
+            color: var(--muted);
+        }
+
+        input[type="text"],
+        input[type="file"] {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-size: 1rem;
+            background: white;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(46, 167, 224, 0.15);
+        }
+
+        .hint {
+            margin-top: 8px;
+            color: var(--muted);
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        button {
+            border: none;
+            border-radius: 10px;
+            padding: 13px 16px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .primary {
+            background: var(--accent);
+            color: white;
+            flex: 1;
+        }
+
+        .primary:hover { background: var(--accent-dark); }
+        .primary:disabled { background: #b9dff1; cursor: not-allowed; }
+
+        .secondary {
+            background: #eef2f7;
+            color: var(--text);
+        }
+
+        .secondary:hover { background: #e2e8f0; }
+
+        .status {
+            display: none;
+            margin-top: 18px;
+            border-radius: 10px;
+            padding: 12px 14px;
+            font-size: 0.95rem;
+            line-height: 1.4;
+        }
+
+        .status.success { display: block; background: var(--success-bg); color: var(--success-text); }
+        .status.error { display: block; background: var(--error-bg); color: var(--error-text); }
+        .status.warning { display: block; background: var(--warning-bg); color: var(--warning-text); }
+
+        .result-empty {
+            color: var(--muted);
+            line-height: 1.6;
+            margin: 0;
+        }
+
+        .result-card {
+            display: none;
+            gap: 16px;
+            flex-direction: column;
+        }
+
+        .result-card.visible { display: flex; }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 16px;
+        }
+
+        .result-header h2 {
+            margin: 0 0 6px;
+            text-align: left;
+            font-size: 1.35rem;
+        }
+
+        .result-header p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .badge {
+            border-radius: 999px;
+            padding: 8px 12px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .badge.verified { background: var(--success-bg); color: var(--success-text); }
+        .badge.invalid_signature,
+        .badge.error { background: var(--error-bg); color: var(--error-text); }
+        .badge.unsigned { background: var(--warning-bg); color: var(--warning-text); }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .item {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px;
+            background: #fbfdff;
+        }
+
+        .item .label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--muted);
+            font-size: 0.83rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .item .value {
+            margin: 0;
+            font-size: 1rem;
+            line-height: 1.45;
+            word-break: break-word;
+        }
+
+        .json-box {
+            background: #0f172a;
+            color: #e2e8f0;
+            border-radius: 12px;
+            padding: 16px;
+            overflow: auto;
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 900px) {
+            .layout { grid-template-columns: 1fr; }
+            .hero { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page">
+        <div class="hero">
+            <div>
+                <h1>Проверка PDF</h1>
+                <p>Проверьте, что PDF действительно подписан, что целостность подписи не нарушена, и какой сертификат встроен в документ.</p>
+            </div>
+            <a href="/">К загрузке</a>
+        </div>
+
+        <div class="layout">
+            <div class="panel">
+                <div class="modes">
+                    <button type="button" class="mode-btn active" data-mode="token">По токену</button>
+                    <button type="button" class="mode-btn" data-mode="upload">По PDF</button>
+                </div>
+
+                <div id="token-mode">
+                    <div class="field">
+                        <label for="token">Токен</label>
+                        <input id="token" type="text" placeholder="uuid токен">
+                        <div class="hint">Подходит для подписанных документов, сохраненных в этой системе.</div>
+                    </div>
+                </div>
+
+                <div id="upload-mode" style="display:none;">
+                    <div class="field">
+                        <label for="pdf">PDF файл</label>
+                        <input id="pdf" type="file" accept=".pdf,application/pdf">
+                        <div class="hint">Загрузите PDF, чтобы проверить наличие подписи и ее целостность.</div>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button id="verify-btn" type="button" class="primary">Проверить</button>
+                    <button id="reset-btn" type="button" class="secondary">Сбросить</button>
+                </div>
+
+                <div id="status" class="status"></div>
+            </div>
+
+            <div class="panel">
+                <div id="empty-state">
+                    <p class="result-empty">Результат появится здесь после проверки. Интерфейс покажет наличие подписи, криптографическую валидность, данные сертификата и время подписания.</p>
+                </div>
+
+                <div id="result-card" class="result-card">
+                    <div class="result-header">
+                        <div>
+                            <h2>Результат проверки</h2>
+                            <p id="result-summary"></p>
+                        </div>
+                        <span id="status-badge" class="badge">unknown</span>
+                    </div>
+
+                    <div class="grid">
+                        <div class="item">
+                            <span class="label">Подпись найдена</span>
+                            <p id="signature-present" class="value">-</p>
+                        </div>
+                        <div class="item">
+                            <span class="label">Целостность</span>
+                            <p id="integrity-valid" class="value">-</p>
+                        </div>
+                        <div class="item">
+                            <span class="label">Подписант (CN)</span>
+                            <p id="signer-cn" class="value">-</p>
+                        </div>
+                        <div class="item">
+                            <span class="label">Время подписания</span>
+                            <p id="signing-time" class="value">-</p>
+                        </div>
+                        <div class="item">
+                            <span class="label">Subject</span>
+                            <p id="signer-subject" class="value">-</p>
+                        </div>
+                        <div class="item">
+                            <span class="label">Self-signed</span>
+                            <p id="self-signed" class="value">-</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <span class="label">JSON</span>
+                        <pre id="raw-json" class="json-box"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const modeButtons = document.querySelectorAll('.mode-btn');
+        const tokenMode = document.getElementById('token-mode');
+        const uploadMode = document.getElementById('upload-mode');
+        const verifyBtn = document.getElementById('verify-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const statusBox = document.getElementById('status');
+        const emptyState = document.getElementById('empty-state');
+        const resultCard = document.getElementById('result-card');
+        const tokenInput = document.getElementById('token');
+        const pdfInput = document.getElementById('pdf');
+
+        let currentMode = 'token';
+
+        modeButtons.forEach((button) => {
+            button.addEventListener('click', () => setMode(button.dataset.mode));
+        });
+
+        verifyBtn.addEventListener('click', verifyDocument);
+        resetBtn.addEventListener('click', resetForm);
+
+        function setMode(mode) {
+            currentMode = mode;
+            modeButtons.forEach((button) => {
+                button.classList.toggle('active', button.dataset.mode === mode);
+            });
+
+            tokenMode.style.display = mode === 'token' ? 'block' : 'none';
+            uploadMode.style.display = mode === 'upload' ? 'block' : 'none';
+            hideStatus();
+        }
+
+        async function verifyDocument() {
+            hideStatus();
+            verifyBtn.disabled = true;
+            verifyBtn.innerText = 'Проверяем...';
+
+            try {
+                let response;
+
+                if (currentMode === 'token') {
+                    const token = tokenInput.value.trim();
+                    if (!token) {
+                        showStatus('Введите токен.', 'error');
+                        return;
+                    }
+
+                    response = await fetch('/api/verify', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token })
+                    });
+                } else {
+                    const file = pdfInput.files[0];
+                    if (!file) {
+                        showStatus('Выберите PDF файл.', 'error');
+                        return;
+                    }
+
+                    const formData = new FormData();
+                    formData.append('pdf', file);
+
+                    response = await fetch('/api/verify', {
+                        method: 'POST',
+                        body: formData
+                    });
+                }
+
+                const data = await response.json();
+
+                renderResult(data);
+
+                if (!response.ok) {
+                    showStatus(data.error || 'Проверка завершилась с ошибкой.', 'error');
+                    return;
+                }
+
+                showStatus(buildStatusMessage(data), mapStatusToAlert(data.status));
+            } catch (error) {
+                showStatus('Не удалось выполнить проверку.', 'error');
+            } finally {
+                verifyBtn.disabled = false;
+                verifyBtn.innerText = 'Проверить';
+            }
+        }
+
+        function renderResult(data) {
+            emptyState.style.display = 'none';
+            resultCard.classList.add('visible');
+
+            const badge = document.getElementById('status-badge');
+            badge.innerText = data.status || 'unknown';
+            badge.className = `badge ${data.status || 'error'}`;
+
+            document.getElementById('result-summary').innerText = buildStatusMessage(data);
+            document.getElementById('signature-present').innerText = formatBoolean(data.signature_present);
+            document.getElementById('integrity-valid').innerText = formatBoolean(data.integrity_valid);
+            document.getElementById('signer-cn').innerText = data.signer_cn || '—';
+            document.getElementById('signing-time').innerText = data.signing_time || '—';
+            document.getElementById('signer-subject').innerText = data.signer_subject || '—';
+            document.getElementById('self-signed').innerText = formatNullableBoolean(data.certificate_self_signed);
+            document.getElementById('raw-json').innerText = JSON.stringify(data, null, 2);
+        }
+
+        function buildStatusMessage(data) {
+            switch (data.status) {
+                case 'verified':
+                    return 'Подпись найдена и криптографически валидна.';
+                case 'unsigned':
+                    return 'В PDF не найдено встроенной подписи.';
+                case 'invalid_signature':
+                    return 'Подпись есть, но проверка целостности не прошла.';
+                default:
+                    return data.error || 'Проверка завершилась с ошибкой.';
+            }
+        }
+
+        function mapStatusToAlert(status) {
+            if (status === 'verified') return 'success';
+            if (status === 'unsigned') return 'warning';
+            return 'error';
+        }
+
+        function formatBoolean(value) {
+            return value ? 'Да' : 'Нет';
+        }
+
+        function formatNullableBoolean(value) {
+            if (value === true) return 'Да';
+            if (value === false) return 'Нет';
+            return 'Неизвестно';
+        }
+
+        function showStatus(text, type) {
+            statusBox.innerText = text;
+            statusBox.className = `status ${type}`;
+        }
+
+        function hideStatus() {
+            statusBox.innerText = '';
+            statusBox.className = 'status';
+        }
+
+        function resetForm() {
+            tokenInput.value = '';
+            pdfInput.value = '';
+            hideStatus();
+            emptyState.style.display = 'block';
+            resultCard.classList.remove('visible');
+        }
+    </script>
+</body>
+</html>

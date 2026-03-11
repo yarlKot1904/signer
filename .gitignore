@@ -69,3 +69,5 @@ coverage/
 *.jar
 *.war
 *.zip
+*/AGENTS.md
+AGENTS.md
