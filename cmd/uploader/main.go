@@ -1,22 +1,27 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/yarlKot1904/signer/internal/config"
-	"github.com/yarlKot1904/signer/internal/infra"
-
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/tus/tusd/v2/pkg/handler"
 	"github.com/tus/tusd/v2/pkg/s3store"
+	"github.com/yarlKot1904/signer/internal/config"
+	"github.com/yarlKot1904/signer/internal/infra"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -47,9 +52,10 @@ func main() {
 		log.Fatal("Config error:", err)
 	}
 
-	ctx := context.Background()
+	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	s3Client, err := infra.NewS3Client(ctx, cfg.MinioEndpoint, cfg.MinioID, cfg.MinioSecret, cfg.MinioRegion)
+	s3Client, err := infra.NewS3Client(appCtx, cfg.MinioEndpoint, cfg.MinioID, cfg.MinioSecret, cfg.MinioRegion)
 	if err != nil {
 		log.Fatal("S3 connect failed:", err)
 	}
@@ -58,6 +64,11 @@ func main() {
 	if err != nil {
 		log.Fatal("Redis connect failed:", err)
 	}
+	defer func() {
+		if err := redisClient.Close(); err != nil {
+			log.Printf("Redis close failed: %v", err)
+		}
+	}()
 
 	store := s3store.New(cfg.MinioBucket, s3Client)
 	composer := handler.NewStoreComposer()
@@ -91,6 +102,7 @@ func main() {
 		BasePath:              "/files/",
 		StoreComposer:         composer,
 		NotifyCompleteUploads: true,
+		MaxSize:               cfg.UploadMaxBytes,
 	})
 	if err != nil {
 		log.Fatal("Tusd handler error:", err)
@@ -100,76 +112,170 @@ func main() {
 		BasePath:              "/verify-files/",
 		StoreComposer:         composer,
 		NotifyCompleteUploads: true,
+		MaxSize:               cfg.UploadMaxBytes,
 	})
 	if err != nil {
 		log.Fatal("Verify tusd handler error:", err)
 	}
 
-	go func() {
-		for {
-			event := <-tusHandler.CompleteUploads
-			handleUploadComplete(event, s3Client, cfg.MinioBucket, redisClient, rabbitCh, q.Name)
-		}
-	}()
+	go handleUploadLoop(appCtx, cfg, tusHandler.CompleteUploads, s3Client, redisClient, rabbitCh, q.Name)
+	go handleVerifyUploadLoop(appCtx, cfg, verifyTusHandler.CompleteUploads, s3Client, redisClient)
+	go runVerifyCleanupLoop(appCtx, cfg, s3Client, redisClient)
+
+	mux := http.NewServeMux()
+	mux.Handle("/files/", http.StripPrefix("/files/", tusHandler))
+	mux.Handle("/verify-files/", http.StripPrefix("/verify-files/", verifyTusHandler))
+	mux.Handle("/", http.FileServer(http.Dir("./static")))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+
+	server := &http.Server{
+		Addr:              ":" + cfg.HTTPPort,
+		Handler:           mux,
+		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
+		ReadTimeout:       cfg.HTTPReadTimeout,
+		WriteTimeout:      cfg.HTTPWriteTimeout,
+		IdleTimeout:       cfg.HTTPIdleTimeout,
+	}
 
 	go func() {
-		for {
-			event := <-verifyTusHandler.CompleteUploads
-			handleVerifyUploadComplete(event, s3Client, cfg.MinioBucket, redisClient)
+		<-appCtx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Uploader shutdown failed: %v", err)
 		}
 	}()
-
-	go runVerifyCleanupLoop(ctx, s3Client, cfg.MinioBucket, redisClient)
-
-	http.Handle("/files/", http.StripPrefix("/files/", tusHandler))
-	http.Handle("/verify-files/", http.StripPrefix("/verify-files/", verifyTusHandler))
-
-	http.Handle("/", http.FileServer(http.Dir("./static")))
 
 	log.Printf("Uploader service started on :%s", cfg.HTTPPort)
-	if err := http.ListenAndServe(":"+cfg.HTTPPort, nil); err != nil {
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
 
-func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket string, rdb *redis.Client, rabbitCh *amqp.Channel, queueName string) {
+func handleUploadLoop(
+	appCtx context.Context,
+	cfg *config.Config,
+	events <-chan handler.HookEvent,
+	s3Client *s3.Client,
+	rdb *redis.Client,
+	rabbitCh *amqp.Channel,
+	queueName string,
+) {
+	for {
+		select {
+		case <-appCtx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			handleUploadComplete(appCtx, cfg, event, s3Client, cfg.MinioBucket, rdb, rabbitCh, queueName)
+		}
+	}
+}
+
+func handleVerifyUploadLoop(
+	appCtx context.Context,
+	cfg *config.Config,
+	events <-chan handler.HookEvent,
+	s3Client *s3.Client,
+	rdb *redis.Client,
+) {
+	for {
+		select {
+		case <-appCtx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			handleVerifyUploadComplete(appCtx, cfg, event, s3Client, cfg.MinioBucket, rdb)
+		}
+	}
+}
+
+func handleUploadComplete(
+	appCtx context.Context,
+	cfg *config.Config,
+	event handler.HookEvent,
+	s3Client *s3.Client,
+	bucket string,
+	rdb *redis.Client,
+	rabbitCh *amqp.Channel,
+	queueName string,
+) {
+	storageKey := event.Upload.Storage["Key"]
+	if storageKey == "" {
+		log.Printf("Upload completed without storage key: uploadID=%s", event.Upload.ID)
+		return
+	}
+
+	opCtx, cancel := context.WithTimeout(appCtx, cfg.DependencyTimeout)
+	defer cancel()
+
+	isPDF, err := isPDFObject(opCtx, s3Client, bucket, storageKey)
+	if err != nil {
+		log.Printf("Upload PDF validation failed for %s: %v", storageKey, err)
+		return
+	}
+	if !isPDF {
+		log.Printf("Rejected non-PDF upload: key=%s", storageKey)
+		if err := deleteUploadArtifacts(opCtx, s3Client, bucket, storageKey); err != nil {
+			log.Printf("Failed to delete rejected upload %s: %v", storageKey, err)
+		}
+		return
+	}
+
 	email := event.Upload.MetaData["userEmail"]
 	filename := event.Upload.MetaData["filename"]
 	if filename == "" {
 		filename = "document.pdf"
 	}
 
-	ctx := context.Background()
-	finalKey, err := moveUploadedObject(ctx, s3Client, bucket, event.Upload.Storage["Key"], "")
+	finalKey, err := moveUploadedObject(opCtx, s3Client, bucket, storageKey, "")
 	if err != nil {
 		log.Printf("Error moving signing upload in S3: %v", err)
 		return
 	}
 
 	downloadToken := uuid.New().String()
-
 	meta := FileMeta{
 		OriginalName: filename,
 		S3Key:        finalKey,
-		MimeType:     event.Upload.MetaData["filetype"],
+		MimeType:     "application/pdf",
 		OwnerEmail:   email,
 	}
 
-	data, _ := json.Marshal(meta)
-
-	err = rdb.Set(ctx, "doc:"+downloadToken, data, 24*time.Hour).Err()
+	data, err := json.Marshal(meta)
 	if err != nil {
-		log.Printf("Error saving to Redis: %v", err)
+		log.Printf("Error marshaling upload metadata for %s: %v", finalKey, err)
+		_ = deleteUploadArtifacts(opCtx, s3Client, bucket, finalKey)
 		return
 	}
+
+	if err := rdb.Set(opCtx, "doc:"+downloadToken, data, 24*time.Hour).Err(); err != nil {
+		log.Printf("Error saving to Redis: %v", err)
+		_ = deleteUploadArtifacts(opCtx, s3Client, bucket, finalKey)
+		return
+	}
+
 	task := TaskMessage{
 		Token: downloadToken,
 		Email: email,
 		S3Key: finalKey,
 	}
-	taskJSON, _ := json.Marshal(task)
+	taskJSON, err := json.Marshal(task)
+	if err != nil {
+		log.Printf("Failed to marshal task for %s: %v", downloadToken, err)
+		_ = rdb.Del(opCtx, "doc:"+downloadToken).Err()
+		_ = deleteUploadArtifacts(opCtx, s3Client, bucket, finalKey)
+		return
+	}
 
-	err = rabbitCh.PublishWithContext(ctx,
+	err = rabbitCh.PublishWithContext(opCtx,
 		"",
 		queueName,
 		false,
@@ -177,28 +283,57 @@ func handleUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket s
 		amqp.Publishing{
 			ContentType: "application/json",
 			Body:        taskJSON,
-		})
-
+		},
+	)
 	if err != nil {
 		log.Printf("Failed to publish task: %v", err)
-	} else {
-		log.Printf("Published task to RabbitMQ for: %s", downloadToken)
+		_ = rdb.Del(opCtx, "doc:"+downloadToken).Err()
+		_ = deleteUploadArtifacts(opCtx, s3Client, bucket, finalKey)
+		return
 	}
 
-	log.Printf("File: %s (%s)", filename, email)
+	log.Printf("Upload complete: file=%s email=%s finalKey=%s token=%s", filename, email, finalKey, downloadToken)
 	log.Printf("Download: http://signer.local/download/%s", downloadToken)
 	log.Printf("View: http://signer.local/view/%s", downloadToken)
 	log.Printf("Sign: http://signer.local/sign.html?token=%s", downloadToken)
 }
 
-func handleVerifyUploadComplete(event handler.HookEvent, s3Client *s3.Client, bucket string, rdb *redis.Client) {
+func handleVerifyUploadComplete(
+	appCtx context.Context,
+	cfg *config.Config,
+	event handler.HookEvent,
+	s3Client *s3.Client,
+	bucket string,
+	rdb *redis.Client,
+) {
+	storageKey := event.Upload.Storage["Key"]
+	if storageKey == "" {
+		log.Printf("Verify upload completed without storage key: uploadID=%s", event.Upload.ID)
+		return
+	}
+
+	opCtx, cancel := context.WithTimeout(appCtx, cfg.DependencyTimeout)
+	defer cancel()
+
+	isPDF, err := isPDFObject(opCtx, s3Client, bucket, storageKey)
+	if err != nil {
+		log.Printf("Verify upload PDF validation failed for %s: %v", storageKey, err)
+		return
+	}
+	if !isPDF {
+		log.Printf("Rejected non-PDF verify upload: key=%s", storageKey)
+		if err := deleteUploadArtifacts(opCtx, s3Client, bucket, storageKey); err != nil {
+			log.Printf("Failed to delete rejected verify upload %s: %v", storageKey, err)
+		}
+		return
+	}
+
 	filename := event.Upload.MetaData["filename"]
 	if filename == "" {
 		filename = "document.pdf"
 	}
 
-	ctx := context.Background()
-	finalKey, err := moveUploadedObject(ctx, s3Client, bucket, event.Upload.Storage["Key"], verifyObjectPrefix)
+	finalKey, err := moveUploadedObject(opCtx, s3Client, bucket, storageKey, verifyObjectPrefix)
 	if err != nil {
 		log.Printf("Error moving verify upload in S3: %v", err)
 		return
@@ -212,15 +347,21 @@ func handleVerifyUploadComplete(event handler.HookEvent, s3Client *s3.Client, bu
 	meta := FileMeta{
 		OriginalName: filename,
 		S3Key:        finalKey,
-		MimeType:     event.Upload.MetaData["filetype"],
+		MimeType:     "application/pdf",
 	}
 
-	data, _ := json.Marshal(meta)
-	if err := rdb.Set(ctx, "verify:"+verifyToken, data, verifyUploadTTL).Err(); err != nil {
-		log.Printf("Error saving verify upload metadata to Redis: %v", err)
+	data, err := json.Marshal(meta)
+	if err != nil {
+		log.Printf("Error marshaling verify metadata for %s: %v", finalKey, err)
+		_ = deleteVerifyArtifacts(opCtx, s3Client, bucket, finalKey)
 		return
 	}
-	if err := rdb.ZAdd(ctx, verifyCleanupZSetKey, redis.Z{
+	if err := rdb.Set(opCtx, "verify:"+verifyToken, data, verifyUploadTTL).Err(); err != nil {
+		log.Printf("Error saving verify upload metadata to Redis: %v", err)
+		_ = deleteVerifyArtifacts(opCtx, s3Client, bucket, finalKey)
+		return
+	}
+	if err := rdb.ZAdd(opCtx, verifyCleanupZSetKey, redis.Z{
 		Score:  float64(time.Now().Add(verifyUploadTTL).Unix()),
 		Member: finalKey,
 	}).Err(); err != nil {
@@ -231,7 +372,7 @@ func handleVerifyUploadComplete(event handler.HookEvent, s3Client *s3.Client, bu
 }
 
 func moveUploadedObject(ctx context.Context, s3Client *s3.Client, bucket, oldKey, keyPrefix string) (string, error) {
-	now := time.Now()
+	now := time.Now().UTC()
 	newKey := fmt.Sprintf("%s%d/%02d/%s", keyPrefix, now.Year(), int(now.Month()), oldKey)
 
 	if err := infra.MoveObject(ctx, s3Client, bucket, oldKey, newKey); err != nil {
@@ -248,15 +389,22 @@ func moveUploadedObject(ctx context.Context, s3Client *s3.Client, bucket, oldKey
 	return newKey, nil
 }
 
-func runVerifyCleanupLoop(ctx context.Context, s3Client *s3.Client, bucket string, rdb *redis.Client) {
+func runVerifyCleanupLoop(
+	appCtx context.Context,
+	cfg *config.Config,
+	s3Client *s3.Client,
+	rdb *redis.Client,
+) {
 	ticker := time.NewTicker(verifyCleanupInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			cleanupExpiredVerifyObjects(ctx, s3Client, bucket, rdb)
-		case <-ctx.Done():
+			opCtx, cancel := context.WithTimeout(appCtx, cfg.DependencyTimeout)
+			cleanupExpiredVerifyObjects(opCtx, s3Client, cfg.MinioBucket, rdb)
+			cancel()
+		case <-appCtx.Done():
 			return
 		}
 	}
@@ -283,6 +431,39 @@ func cleanupExpiredVerifyObjects(ctx context.Context, s3Client *s3.Client, bucke
 		}
 		log.Printf("Deleted expired verify object: %s", key)
 	}
+}
+
+func isPDFObject(ctx context.Context, s3Client *s3.Client, bucket, key string) (bool, error) {
+	obj, err := s3Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Range:  aws.String("bytes=0-7"),
+	})
+	if err != nil {
+		return false, err
+	}
+	defer obj.Body.Close()
+
+	header, err := io.ReadAll(obj.Body)
+	if err != nil {
+		return false, err
+	}
+	return hasPDFHeader(header), nil
+}
+
+func hasPDFHeader(header []byte) bool {
+	return bytes.HasPrefix(header, []byte("%PDF-"))
+}
+
+func deleteUploadArtifacts(ctx context.Context, s3Client *s3.Client, bucket, key string) error {
+	if err := infra.DeleteObject(ctx, s3Client, bucket, key); err != nil {
+		return err
+	}
+	infoKey := key + ".info"
+	if err := infra.DeleteObject(ctx, s3Client, bucket, infoKey); err != nil {
+		log.Printf("Upload cleanup .info delete skipped for %s: %v", infoKey, err)
+	}
+	return nil
 }
 
 func deleteVerifyArtifacts(ctx context.Context, s3Client *s3.Client, bucket, key string) error {

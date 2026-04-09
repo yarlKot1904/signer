@@ -120,11 +120,11 @@ spec:
           valueFrom: {secretKeyRef: {name: signer-secrets, key: POSTGRES_PASSWORD}}
         - name: POSTGRES_DB
           valueFrom: {secretKeyRef: {name: signer-secrets, key: POSTGRES_DB}}
-          volumeMounts:
-          - {name: pg-data, mountPath: /var/lib/postgresql/data}
-        volumes:
-        - name: pg-data
-          persistentVolumeClaim: {claimName: postgres-pvc}
+        volumeMounts:
+        - {name: pg-data, mountPath: /var/lib/postgresql/data}
+      volumes:
+      - name: pg-data
+        persistentVolumeClaim: {claimName: postgres-pvc}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

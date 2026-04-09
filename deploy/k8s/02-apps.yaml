@@ -1,45 +1,111 @@
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: uploader, namespace: default}
+metadata:
+  name: uploader
+  namespace: default
 spec:
   replicas: 1
-  selector: {matchLabels: {app: uploader}}
+  selector:
+    matchLabels:
+      app: uploader
   template:
-    metadata: {labels: {app: uploader}}
+    metadata:
+      labels:
+        app: uploader
     spec:
       containers:
       - name: uploader
-        image: ghcr.io/yarlkot1904/signer/uploader:latest 
-        imagePullPolicy: Always
-        ports: [{containerPort: 8080}]
+        image: ghcr.io/yarlkot1904/signer/uploader:2026-03-12
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
         env:
-        - {name: MINIO_ENDPOINT, value: "http://minio:9000"}
-        - {name: MINIO_ID, value: "minioadmin"}
-        - {name: MINIO_SECRET, value: "minioadmin"}
-        - {name: MINIO_BUCKET, value: "docs-storage"}
-        - {name: REDIS_ADDR, value: "redis:6379"}
-        - {name: HTTP_PORT, value: "8080"}
-        - {name: RABBIT_URL, value: "amqp://user:password@rabbitmq:5672/"}
+        - name: MINIO_ENDPOINT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_ENDPOINT}}
+        - name: MINIO_ID
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_ID}}
+        - name: MINIO_SECRET
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: MINIO_SECRET}}
+        - name: MINIO_BUCKET
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_BUCKET}}
+        - name: MINIO_REGION
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_REGION}}
+        - name: REDIS_ADDR
+          valueFrom: {configMapKeyRef: {name: signer-config, key: REDIS_ADDR}}
+        - name: RABBIT_URL
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: RABBIT_URL}}
+        - name: HTTP_PORT
+          value: "8080"
+        - name: HTTP_READ_HEADER_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_HEADER_TIMEOUT}}
+        - name: HTTP_READ_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_TIMEOUT}}
+        - name: HTTP_WRITE_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_WRITE_TIMEOUT}}
+        - name: HTTP_IDLE_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_IDLE_TIMEOUT}}
+        - name: SHUTDOWN_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: SHUTDOWN_TIMEOUT}}
+        - name: DEPENDENCY_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: DEPENDENCY_TIMEOUT}}
+        - name: UPLOAD_MAX_BYTES
+          valueFrom: {configMapKeyRef: {name: signer-config, key: UPLOAD_MAX_BYTES}}
+        readinessProbe:
+          httpGet: {path: /health, port: 8080}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 8080}
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: uploader-svc, namespace: default}
-spec: {ports: [{port: 80, targetPort: 8080}], selector: {app: uploader}}
+metadata:
+  name: uploader-svc
+  namespace: default
+spec:
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: uploader
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: downloader, namespace: default}
+metadata:
+  name: downloader
+  namespace: default
 spec:
   replicas: 1
-  selector: {matchLabels: {app: downloader}}
+  selector:
+    matchLabels:
+      app: downloader
   template:
-    metadata: {labels: {app: downloader}}
+    metadata:
+      labels:
+        app: downloader
     spec:
       containers:
       - name: downloader
-        image: ghcr.io/yarlkot1904/signer/downloader:latest
-        imagePullPolicy: Always
-        ports: [{containerPort: 8081}]
+        image: ghcr.io/yarlkot1904/signer/downloader:2026-03-12
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8081
         env:
         - name: MINIO_ENDPOINT
           valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_ENDPOINT}}
@@ -57,29 +123,72 @@ spec:
           value: "8081"
         - name: DB_DSN
           valueFrom: {secretKeyRef: {name: signer-secrets, key: DB_DSN}}
+        - name: HTTP_READ_HEADER_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_HEADER_TIMEOUT}}
+        - name: HTTP_READ_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_TIMEOUT}}
+        - name: HTTP_WRITE_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_WRITE_TIMEOUT}}
+        - name: HTTP_IDLE_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_IDLE_TIMEOUT}}
+        - name: SHUTDOWN_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: SHUTDOWN_TIMEOUT}}
+        readinessProbe:
+          httpGet: {path: /health, port: 8081}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 8081}
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: downloader-svc, namespace: default}
+metadata:
+  name: downloader-svc
+  namespace: default
 spec:
-  ports: [{port: 80, targetPort: 8081}]
-  selector: {app: downloader}
-
+  ports:
+  - port: 80
+    targetPort: 8081
+  selector:
+    app: downloader
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: signer, namespace: default}
+metadata:
+  name: signer
+  namespace: default
 spec:
   replicas: 1
-  selector: {matchLabels: {app: signer}}
+  selector:
+    matchLabels:
+      app: signer
   template:
-    metadata: {labels: {app: signer}}
+    metadata:
+      labels:
+        app: signer
     spec:
       containers:
       - name: signer
-        image: ghcr.io/yarlkot1904/signer/signer:latest
-        imagePullPolicy: Always
-        ports: [{containerPort: 8082}]
+        image: ghcr.io/yarlkot1904/signer/signer:2026-03-12
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8082
         env:
         - name: HTTP_PORT
           value: "8082"
@@ -87,7 +196,6 @@ spec:
           valueFrom: {secretKeyRef: {name: signer-secrets, key: DB_DSN}}
         - name: RABBIT_URL
           valueFrom: {secretKeyRef: {name: signer-secrets, key: RABBIT_URL}}
-
         - name: MINIO_ENDPOINT
           valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_ENDPOINT}}
         - name: MINIO_ID
@@ -100,18 +208,60 @@ spec:
           valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_REGION}}
         - name: REDIS_ADDR
           valueFrom: {configMapKeyRef: {name: signer-config, key: REDIS_ADDR}}
-
         - name: PDFSIGN_URL
           valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGN_URL}}
         - name: MASTER_KEY_HEX
           valueFrom: {secretKeyRef: {name: signer-secrets, key: MASTER_KEY_HEX}}
+        - name: HTTP_READ_HEADER_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_HEADER_TIMEOUT}}
+        - name: HTTP_READ_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_TIMEOUT}}
+        - name: HTTP_WRITE_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_WRITE_TIMEOUT}}
+        - name: HTTP_IDLE_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_IDLE_TIMEOUT}}
+        - name: SHUTDOWN_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: SHUTDOWN_TIMEOUT}}
+        - name: DEPENDENCY_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: DEPENDENCY_TIMEOUT}}
+        - name: PDFSIGN_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGN_TIMEOUT}}
+        - name: JSON_MAX_BYTES
+          valueFrom: {configMapKeyRef: {name: signer-config, key: JSON_MAX_BYTES}}
+        readinessProbe:
+          httpGet: {path: /health, port: 8082}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 8082}
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: signer-svc, namespace: default}
+metadata:
+  name: signer-svc
+  namespace: default
 spec:
-  ports: [{port: 80, targetPort: 8082}]
-  selector: {app: signer}
+  ports:
+  - port: 80
+    targetPort: 8082
+  selector:
+    app: signer
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -130,10 +280,17 @@ spec:
     spec:
       containers:
       - name: pdfsigner
-        image: ghcr.io/yarlkot1904/signer/pdfsigner:latest
-        imagePullPolicy: Always
+        image: ghcr.io/yarlkot1904/signer/pdfsigner:2026-03-12
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8090
+        env:
+        - name: PDFSIGNER_MAX_FILE_SIZE
+          valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGNER_MAX_FILE_SIZE}}
+        - name: PDFSIGNER_MAX_REQUEST_SIZE
+          valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGNER_MAX_REQUEST_SIZE}}
+        - name: PDFSIGNER_MAX_HEADER_SIZE
+          valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGNER_MAX_HEADER_SIZE}}
         readinessProbe:
           httpGet: {path: /health, port: 8090}
           initialDelaySeconds: 5
@@ -142,6 +299,13 @@ spec:
           httpGet: {path: /health, port: 8090}
           initialDelaySeconds: 15
           periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "768Mi"
 ---
 apiVersion: v1
 kind: Service
@@ -155,4 +319,3 @@ spec:
   - name: http
     port: 8090
     targetPort: 8090
-

@@ -130,6 +130,9 @@ class PdfSigningService {
         }
     }
 
+    fun isPdf(pdfBytes: ByteArray): Boolean =
+        pdfBytes.size >= 5 && pdfBytes.copyOfRange(0, 5).contentEquals("%PDF-".toByteArray())
+
     fun verifyPdf(pdfBytes: ByteArray): VerificationResult {
         PDDocument.load(ByteArrayInputStream(pdfBytes)).use { doc ->
             val signatures = doc.signatureDictionaries

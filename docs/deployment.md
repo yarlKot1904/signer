@@ -17,6 +17,7 @@ Images referenced in Kubernetes manifests use GHCR:
 Start the stack:
 
 ```powershell
+Copy-Item .env.example .env
 docker compose up --build
 ```
 
@@ -36,19 +37,15 @@ Compose services:
 Ports:
 
 - `80`: public entry through Nginx
-- `8082`: direct access to `signer`
-- `8090`: direct access to `pdfsigner`
-- `9000`: MinIO API
 - `9001`: MinIO console
-- `5432`: PostgreSQL
-- `5672`: RabbitMQ AMQP
 - `15672`: RabbitMQ management UI
 
 Compose-specific notes:
 
 - `gateway` is only used in local Compose mode
 - `minio-init` creates the `docs-storage` bucket
-- `MASTER_KEY_HEX` must be replaced before signing
+- secrets and connection strings are read from `.env`
+- internal service ports are not published to the host by default
 
 ## Kubernetes
 
@@ -58,6 +55,7 @@ Kubernetes manifests live under `deploy/k8s/`:
 - `01-infra.yaml`
 - `02-apps.yaml`
 - `03-ingress.yaml`
+- `04-networkpolicy.yaml`
 
 ### Infra components
 
@@ -102,6 +100,15 @@ Path routing:
 - `DB_DSN`
 - `PDFSIGN_URL`
 - `MASTER_KEY_HEX`
+- `HTTP_READ_HEADER_TIMEOUT`
+- `HTTP_READ_TIMEOUT`
+- `HTTP_WRITE_TIMEOUT`
+- `HTTP_IDLE_TIMEOUT`
+- `SHUTDOWN_TIMEOUT`
+- `DEPENDENCY_TIMEOUT`
+- `PDFSIGN_TIMEOUT`
+- `UPLOAD_MAX_BYTES`
+- `JSON_MAX_BYTES`
 
 ### Service usage
 
@@ -142,7 +149,9 @@ Path routing:
 
 `pdfsigner`:
 
-- no custom application env vars are currently required
+- `PDFSIGNER_MAX_FILE_SIZE`
+- `PDFSIGNER_MAX_REQUEST_SIZE`
+- `PDFSIGNER_MAX_HEADER_SIZE`
 
 ### Infra bootstrap variables
 
@@ -180,3 +189,5 @@ Kubernetes persistent volume claims:
 - PostgreSQL stores signing session state and signed-file metadata.
 - Signed PDFs do not replace original PDFs.
 - `pdfsigner` exposes `/health` for readiness and liveness probes in Kubernetes.
+- Replace placeholder secret values in `00-secrets-config.yaml` before applying manifests.
+- Replace fixed example image tags in `02-apps.yaml` with your published immutable tags or digests.

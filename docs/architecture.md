@@ -171,9 +171,12 @@ Verification by token:
 
 Verification by upload:
 
-1. Client uploads a PDF to `POST /api/verify`.
-2. `signer` forwards the file bytes to `pdfsigner /verify`.
-3. `pdfsigner` returns structured verification JSON.
+1. Client uploads a PDF through Tus to `/verify-files/`.
+2. `uploader` stores the temporary object under `verify/...` and writes `verify:<upload_token>` metadata to Redis.
+3. Client calls `POST /api/verify` with `{ "upload_token": "..." }`.
+4. `signer` loads the temporary object from MinIO.
+5. `signer` forwards the file bytes to `pdfsigner /verify`.
+6. `signer` deletes the temporary object and `.info` sidecar after verification.
 
 ## Architectural Rules
 

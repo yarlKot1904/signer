@@ -1,5 +1,12 @@
 server:
   port: 8090
+  max-http-request-header-size: ${PDFSIGNER_MAX_HEADER_SIZE:16KB}
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: ${PDFSIGNER_MAX_FILE_SIZE:10MB}
+      max-request-size: ${PDFSIGNER_MAX_REQUEST_SIZE:11MB}
 
 logging:
   level:
