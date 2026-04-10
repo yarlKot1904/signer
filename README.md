@@ -98,7 +98,7 @@ See [docs/api.md](docs/api.md) for request and response details.
 
 These behaviors are intentional in the current prototype:
 
-- OTP delivery is delegated to `mailer`, which currently uses a log transport
+- OTP delivery is delegated to `mailer`, which currently uses a log transport and logs the rendered message body for prototype testing
 - Certificates are self-signed and not externally trusted
 - Token links are possession-based
 - Redis metadata expires after 24 hours

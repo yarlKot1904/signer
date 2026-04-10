@@ -81,7 +81,7 @@ services:
       dockerfile: deploy/docker/mailer.Dockerfile
     environment:
       - HTTP_PORT=8083
-      - MAILER_LOG_BODY=${MAILER_LOG_BODY:-false}
+      - MAILER_LOG_BODY=${MAILER_LOG_BODY:-true}
       - HTTP_READ_HEADER_TIMEOUT=${HTTP_READ_HEADER_TIMEOUT:-5s}
       - HTTP_READ_TIMEOUT=${HTTP_READ_TIMEOUT:-15s}
       - HTTP_WRITE_TIMEOUT=${HTTP_WRITE_TIMEOUT:-120s}

@@ -76,7 +76,7 @@ Responsibilities:
 - accepts internal notification requests from `signer`
 - renders OTP and link messages from templates
 - dispatches messages through a transport abstraction
-- currently uses a log transport for prototype delivery
+- currently uses a log transport for prototype delivery and logs the rendered message body for testing
 
 ### pdfsigner
 

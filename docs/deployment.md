@@ -9,17 +9,17 @@ Images referenced in Kubernetes manifests use GHCR.
 
 For ArgoCD and Kubernetes, prefer immutable tags such as a release git tag or `sha-<commit>`:
 
-- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-3`
-- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-3`
-- `ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-3`
-- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-3`
-- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-3`
+- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-4`
+- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-4`
+- `ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-4`
+- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-4`
+- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-4`
 
 The GitHub Actions workflow publishes:
 
 - `latest` on pushes to `main`
 - `sha-<12-char-commit>` on every workflow run
-- the git tag name itself on tag pushes such as `deploy-2026-04-10-3`
+- the git tag name itself on tag pushes such as `deploy-2026-04-10-4`
 
 ## Docker Compose
 
@@ -212,4 +212,4 @@ Kubernetes persistent volume claims:
 - `pdfsigner` exposes `/health` for readiness and liveness probes in Kubernetes.
 - Replace placeholder secret values in `00-secrets-config.yaml` before applying manifests.
 - Keep `02-apps.yaml` pinned to a published immutable tag or digest for ArgoCD syncs.
-- `mailer` currently uses a log transport; keep `MAILER_LOG_BODY=false` unless you intentionally need full message bodies in a controlled local environment.
+- `mailer` currently uses a log transport and logs full message bodies by default for prototype testing.

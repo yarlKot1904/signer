@@ -24,7 +24,7 @@ type Config struct {
 	MailerURL     string `envconfig:"MAILER_URL"`
 	PublicBaseURL string `envconfig:"PUBLIC_BASE_URL" default:"http://signer.local"`
 	MasterKeyHex  string `envconfig:"MASTER_KEY_HEX"`
-	MailerLogBody bool   `envconfig:"MAILER_LOG_BODY" default:"false"`
+	MailerLogBody bool   `envconfig:"MAILER_LOG_BODY" default:"true"`
 
 	HTTPReadHeaderTimeout time.Duration `envconfig:"HTTP_READ_HEADER_TIMEOUT" default:"5s"`
 	HTTPReadTimeout       time.Duration `envconfig:"HTTP_READ_TIMEOUT" default:"15s"`

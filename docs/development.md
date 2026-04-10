@@ -68,8 +68,8 @@ Useful endpoints after startup:
 
 1. Open `http://localhost/`.
 2. Enter an email and upload one PDF.
-3. Check `mailer` delivery logs for the mock notification flow.
-4. If you need the full OTP and links in local debugging, temporarily set `MAILER_LOG_BODY=true` before starting the stack.
+3. Check `mailer` logs for the OTP, sign link, download link, and preview link.
+4. `MAILER_LOG_BODY=true` is the default prototype setting for easier end-to-end testing.
 5. Submit the OTP to sign the document.
 6. Download the signed PDF through `/download/<token>?signed=1`.
 7. Verify the result through `/api/verify`.
