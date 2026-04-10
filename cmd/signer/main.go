@@ -408,6 +408,23 @@ func buildSigningNotification(task TaskMessage, code string) mailer.SendRequest 
 	}
 }
 
+func buildSignedDocumentNotification(recipient, token string) mailer.SendRequest {
+	escapedToken := url.PathEscape(token)
+	signedDownloadURL := joinPublicURL(appCfg.PublicBaseURL, "/download/"+escapedToken+"?signed=1")
+	signedViewURL := joinPublicURL(appCfg.PublicBaseURL, "/view/"+escapedToken+"?signed=1")
+
+	return mailer.SendRequest{
+		Template:    mailer.TemplateSignedDocument,
+		Recipient:   recipient,
+		MessageID:   token + ":signed",
+		Correlation: token,
+		Variables: map[string]string{
+			"signed_download_url": signedDownloadURL,
+			"signed_view_url":     signedViewURL,
+		},
+	}
+}
+
 func joinPublicURL(baseURL, path string) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
@@ -462,11 +479,17 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	signedURL, statusCode, err := signDocument(r.Context(), req)
+	signedURL, recipient, statusCode, err := signDocument(r.Context(), req)
 	if err != nil {
 		writeJSON(w, statusCode, map[string]string{"error": err.Error()})
 		return
 	}
+
+	notifyCtx, cancel := context.WithTimeout(context.Background(), appCfg.DependencyTimeout)
+	if err := notifyMailer(notifyCtx, buildSignedDocumentNotification(recipient, req.Token)); err != nil {
+		log.Printf("Signed document notification failed for token=%s recipient=%s: %v", logutil.MaskToken(req.Token), logutil.MaskEmail(recipient), err)
+	}
+	cancel()
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":     "success",
@@ -475,14 +498,15 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Document signed successfully: token=%s", logutil.MaskToken(req.Token))
 }
 
-func signDocument(ctx context.Context, req SignRequest) (string, int, error) {
+func signDocument(ctx context.Context, req SignRequest) (string, string, int, error) {
 	if strings.TrimSpace(req.Token) == "" || strings.TrimSpace(req.Password) == "" {
-		return "", http.StatusBadRequest, apiError{Status: http.StatusBadRequest, Message: "token and password are required"}
+		return "", "", http.StatusBadRequest, apiError{Status: http.StatusBadRequest, Message: "token and password are required"}
 	}
 
 	var signedKey string
 	signedStored := false
 	signedURL := ""
+	recipient := ""
 
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var session SigningSession
@@ -574,6 +598,7 @@ func signDocument(ctx context.Context, req SignRequest) (string, int, error) {
 		}
 
 		signedURL = fmt.Sprintf("/download/%s?signed=1", session.Token)
+		recipient = session.Email
 		return nil
 	})
 
@@ -588,14 +613,14 @@ func signDocument(ctx context.Context, req SignRequest) (string, int, error) {
 
 		var apiErr apiError
 		if errors.As(err, &apiErr) {
-			return "", apiErr.Status, apiErr
+			return "", "", apiErr.Status, apiErr
 		}
 
 		log.Printf("Signing transaction failed for token=%s: %v", logutil.MaskToken(req.Token), err)
-		return "", http.StatusInternalServerError, apiError{Status: http.StatusInternalServerError, Message: "Internal error"}
+		return "", "", http.StatusInternalServerError, apiError{Status: http.StatusInternalServerError, Message: "Internal error"}
 	}
 
-	return signedURL, http.StatusOK, nil
+	return signedURL, recipient, http.StatusOK, nil
 }
 
 func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {

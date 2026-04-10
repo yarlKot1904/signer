@@ -29,9 +29,10 @@ It accepts one PDF upload, issues a temporary token, creates an OTP-backed signi
 4. `signer` consumes the task, creates a PostgreSQL signing session, and asks `mailer` to deliver the OTP and links.
 5. User signs through `POST /api/sign`.
 6. `signer` generates a self-signed certificate and private key, asks `pdfsigner` to sign the PDF, and stores the signed result in MinIO.
-7. `downloader` serves the original or signed file by token.
-8. `signer` exposes `POST /api/verify`, which delegates cryptographic verification to `pdfsigner`.
-9. Verify uploads use temporary MinIO objects under `verify/...`; both the object and its Tus `.info` sidecar are deleted after verification or TTL cleanup.
+7. `signer` asks `mailer` to deliver the signed-document link after a successful signature.
+8. `downloader` serves the original or signed file by token.
+9. `signer` exposes `POST /api/verify`, which delegates cryptographic verification to `pdfsigner`.
+10. Verify uploads use temporary MinIO objects under `verify/...`; both the object and its Tus `.info` sidecar are deleted after verification or TTL cleanup.
 
 ## Quick Start
 
