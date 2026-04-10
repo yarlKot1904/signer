@@ -9,16 +9,17 @@ Images referenced in Kubernetes manifests use GHCR.
 
 For ArgoCD and Kubernetes, prefer immutable tags such as a release git tag or `sha-<commit>`:
 
-- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-1`
-- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-1`
-- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-1`
-- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-1`
+- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-4`
+- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-4`
+- `ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-4`
+- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-4`
+- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-4`
 
 The GitHub Actions workflow publishes:
 
 - `latest` on pushes to `main`
 - `sha-<12-char-commit>` on every workflow run
-- the git tag name itself on tag pushes such as `deploy-2026-04-10-1`
+- the git tag name itself on tag pushes such as `deploy-2026-04-10-4`
 
 ## Docker Compose
 
@@ -37,6 +38,7 @@ Compose services:
 - `redis`
 - `uploader`
 - `downloader`
+- `mailer`
 - `signer`
 - `postgres`
 - `rabbitmq`
@@ -77,6 +79,7 @@ Kubernetes manifests live under `deploy/k8s/`:
 
 - `uploader`
 - `downloader`
+- `mailer`
 - `signer`
 - `pdfsigner`
 
@@ -107,7 +110,10 @@ Path routing:
 - `RABBIT_URL`
 - `DB_DSN`
 - `PDFSIGN_URL`
+- `MAILER_URL`
+- `PUBLIC_BASE_URL`
 - `MASTER_KEY_HEX`
+- `MAILER_LOG_BODY`
 - `HTTP_READ_HEADER_TIMEOUT`
 - `HTTP_READ_TIMEOUT`
 - `HTTP_WRITE_TIMEOUT`
@@ -153,7 +159,14 @@ Path routing:
 - `DB_DSN`
 - `RABBIT_URL`
 - `PDFSIGN_URL`
+- `MAILER_URL`
+- `PUBLIC_BASE_URL`
 - `MASTER_KEY_HEX`
+
+`mailer`:
+
+- `HTTP_PORT`
+- `MAILER_LOG_BODY`
 
 `pdfsigner`:
 
@@ -199,3 +212,4 @@ Kubernetes persistent volume claims:
 - `pdfsigner` exposes `/health` for readiness and liveness probes in Kubernetes.
 - Replace placeholder secret values in `00-secrets-config.yaml` before applying manifests.
 - Keep `02-apps.yaml` pinned to a published immutable tag or digest for ArgoCD syncs.
+- `mailer` currently uses a log transport and logs full message bodies by default for prototype testing.

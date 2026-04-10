@@ -45,12 +45,14 @@ jobs:
 
           uploader_tags="${REGISTRY}/${IMAGE_NAME}/uploader:${sha_tag}"
           downloader_tags="${REGISTRY}/${IMAGE_NAME}/downloader:${sha_tag}"
+          mailer_tags="${REGISTRY}/${IMAGE_NAME}/mailer:${sha_tag}"
           signer_tags="${REGISTRY}/${IMAGE_NAME}/signer:${sha_tag}"
           pdfsigner_tags="${REGISTRY}/${IMAGE_NAME}/pdfsigner:${sha_tag}"
 
           if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
             uploader_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/uploader:latest"
             downloader_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/downloader:latest"
+            mailer_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/mailer:latest"
             signer_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/signer:latest"
             pdfsigner_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/pdfsigner:latest"
           fi
@@ -58,6 +60,7 @@ jobs:
           if [[ -n "${release_tag}" ]]; then
             uploader_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/uploader:${release_tag}"
             downloader_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/downloader:${release_tag}"
+            mailer_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/mailer:${release_tag}"
             signer_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/signer:${release_tag}"
             pdfsigner_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/pdfsigner:${release_tag}"
           fi
@@ -70,6 +73,9 @@ jobs:
             echo "EOF"
             echo "downloader_tags<<EOF"
             printf '%s\n' "${downloader_tags}"
+            echo "EOF"
+            echo "mailer_tags<<EOF"
+            printf '%s\n' "${mailer_tags}"
             echo "EOF"
             echo "signer_tags<<EOF"
             printf '%s\n' "${signer_tags}"
@@ -100,6 +106,13 @@ jobs:
           file: ./deploy/docker/signer.Dockerfile
           push: true
           tags: ${{ steps.image-tags.outputs.signer_tags }}
+      - name: Build and push Mailer
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./deploy/docker/mailer.Dockerfile
+          push: true
+          tags: ${{ steps.image-tags.outputs.mailer_tags }}
       - name: Build and push PdfSigner
         uses: docker/build-push-action@v4
         with:

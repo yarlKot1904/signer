@@ -20,6 +20,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/yarlKot1904/signer/internal/config"
 	"github.com/yarlKot1904/signer/internal/infra"
+	"github.com/yarlKot1904/signer/internal/logutil"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -115,18 +116,18 @@ func serveFile(w http.ResponseWriter, r *http.Request, rdb *redis.Client, s3c *s
 	val, err := rdb.Get(r.Context(), "doc:"+token).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			log.Printf("Token lookup failed for %s: %v", token, err)
+			log.Printf("Token lookup failed for %s: %v", logutil.MaskToken(token), err)
 			http.Error(w, "Link expired or invalid", http.StatusNotFound)
 			return
 		}
-		log.Printf("Token lookup failed for %s: %v", token, err)
+		log.Printf("Token lookup failed for %s: %v", logutil.MaskToken(token), err)
 		http.Error(w, "Metadata lookup failed", http.StatusInternalServerError)
 		return
 	}
 
 	var meta FileMeta
 	if err := json.Unmarshal([]byte(val), &meta); err != nil {
-		log.Printf("Invalid Redis metadata for %s: %v", token, err)
+		log.Printf("Invalid Redis metadata for %s: %v", logutil.MaskToken(token), err)
 		http.Error(w, "Invalid file metadata", http.StatusInternalServerError)
 		return
 	}
@@ -144,7 +145,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, rdb *redis.Client, s3c *s
 		var s SigningSession
 		res := db.WithContext(r.Context()).First(&s, "token = ?", token)
 		if errors.Is(res.Error, gorm.ErrRecordNotFound) || s.SignedS3Key == "" {
-			log.Printf("Signed lookup failed for %s: %v", token, res.Error)
+			log.Printf("Signed lookup failed for %s: %v", logutil.MaskToken(token), res.Error)
 			http.Error(w, "Signed document not found", http.StatusNotFound)
 			return
 		}
@@ -161,7 +162,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, rdb *redis.Client, s3c *s
 		Key:    aws.String(meta.S3Key),
 	})
 	if err != nil {
-		log.Printf("S3 lookup failed for token=%s key=%s: %v", token, meta.S3Key, err)
+		log.Printf("S3 lookup failed for token=%s key=%s: %v", logutil.MaskToken(token), meta.S3Key, err)
 		http.Error(w, "File storage error", http.StatusInternalServerError)
 		return
 	}
@@ -178,7 +179,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, rdb *redis.Client, s3c *s
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	if _, err := io.Copy(w, obj.Body); err != nil {
-		log.Printf("Stream error for token=%s key=%s: %v", token, meta.S3Key, err)
+		log.Printf("Stream error for token=%s key=%s: %v", logutil.MaskToken(token), meta.S3Key, err)
 	}
 }
 

@@ -2,13 +2,14 @@
 
 ## Overview
 
-Signer is split into four application services and a small set of infrastructure dependencies.
+Signer is split into five application services and a small set of infrastructure dependencies.
 
 The design keeps service boundaries strict:
 
 - `uploader` owns uploads and token creation
 - `downloader` owns file retrieval only
 - `signer` owns signing orchestration, OTP validation, and public API endpoints
+- `mailer` owns notification composition and delivery
 - `pdfsigner` owns PDF cryptography and PDF transformation
 
 ## Service Map
@@ -51,6 +52,7 @@ Responsibilities:
 
 - consumes RabbitMQ signing tasks
 - generates OTP sessions in PostgreSQL
+- calls `mailer` with OTP and document links
 - validates OTP submissions via `POST /api/sign`
 - generates RSA-2048 key pairs and self-signed X.509 certificates
 - encrypts the generated private key with AES-GCM using `MASTER_KEY_HEX`
@@ -64,7 +66,17 @@ Outbound dependencies:
 - PostgreSQL
 - Redis
 - MinIO
+- `mailer`
 - `pdfsigner`
+
+### mailer
+
+Responsibilities:
+
+- accepts internal notification requests from `signer`
+- renders OTP and link messages from templates
+- dispatches messages through a transport abstraction
+- currently uses a log transport for prototype delivery and logs the rendered message body for testing
 
 ### pdfsigner
 
@@ -99,6 +111,7 @@ Libraries:
   - `s3_key`
   - `attempts`
   - `is_used`
+  - `notification_sent_at`
   - `encrypted_priv_key`
   - `cert_pem`
   - `signed_s3_key`
@@ -151,12 +164,13 @@ Traefik Ingress routes `signer.local`:
 4. `uploader` stores token metadata in Redis under `doc:<token>`.
 5. `uploader` publishes a task to `signer.tasks`.
 6. `signer` worker creates a PostgreSQL signing session with a bcrypt-hashed OTP.
-7. User submits the OTP to `POST /api/sign`.
-8. `signer` generates a self-signed certificate and RSA key pair.
-9. `signer` calls `pdfsigner /sign`.
-10. `pdfsigner` stamps and signs the PDF.
-11. `signer` stores the signed PDF under `signed/<original-key>`.
-12. `downloader` serves the signed file through `/download/<token>?signed=1`.
+7. `signer` calls `mailer` to deliver the OTP and links.
+8. User submits the OTP to `POST /api/sign`.
+9. `signer` generates a self-signed certificate and RSA key pair.
+10. `signer` calls `pdfsigner /sign`.
+11. `pdfsigner` stamps and signs the PDF.
+12. `signer` stores the signed PDF under `signed/<original-key>`.
+13. `downloader` serves the signed file through `/download/<token>?signed=1`.
 
 ## End-to-End Verification Flow
 
