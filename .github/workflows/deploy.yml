@@ -3,6 +3,7 @@ name: Build and Push to GHCR
 on:
   push:
     branches: [ "main" ]
+    tags: [ "deploy-*", "v*" ]
   workflow_dispatch:
 
 env:
@@ -29,6 +30,54 @@ jobs:
       - name: Lowercase Registry Image Name
         run: |
           echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
+
+      - name: Compute image tags
+        id: image-tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sha_tag="sha-${GITHUB_SHA::12}"
+          release_tag=""
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          fi
+
+          uploader_tags="${REGISTRY}/${IMAGE_NAME}/uploader:${sha_tag}"
+          downloader_tags="${REGISTRY}/${IMAGE_NAME}/downloader:${sha_tag}"
+          signer_tags="${REGISTRY}/${IMAGE_NAME}/signer:${sha_tag}"
+          pdfsigner_tags="${REGISTRY}/${IMAGE_NAME}/pdfsigner:${sha_tag}"
+
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            uploader_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/uploader:latest"
+            downloader_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/downloader:latest"
+            signer_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/signer:latest"
+            pdfsigner_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/pdfsigner:latest"
+          fi
+
+          if [[ -n "${release_tag}" ]]; then
+            uploader_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/uploader:${release_tag}"
+            downloader_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/downloader:${release_tag}"
+            signer_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/signer:${release_tag}"
+            pdfsigner_tags+=$'\n'"${REGISTRY}/${IMAGE_NAME}/pdfsigner:${release_tag}"
+          fi
+
+          {
+            echo "sha_tag=${sha_tag}"
+            echo "release_tag=${release_tag}"
+            echo "uploader_tags<<EOF"
+            printf '%s\n' "${uploader_tags}"
+            echo "EOF"
+            echo "downloader_tags<<EOF"
+            printf '%s\n' "${downloader_tags}"
+            echo "EOF"
+            echo "signer_tags<<EOF"
+            printf '%s\n' "${signer_tags}"
+            echo "EOF"
+            echo "pdfsigner_tags<<EOF"
+            printf '%s\n' "${pdfsigner_tags}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
         
       - name: Build and push Uploader
         uses: docker/build-push-action@v4
@@ -36,25 +85,25 @@ jobs:
           context: .
           file: ./deploy/docker/uploader.Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/uploader:latest
+          tags: ${{ steps.image-tags.outputs.uploader_tags }}
       - name: Build and push Downloader
         uses: docker/build-push-action@v4
         with:
           context: .
           file: ./deploy/docker/downloader.Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/downloader:latest
+          tags: ${{ steps.image-tags.outputs.downloader_tags }}
       - name: Build and push Signer
         uses: docker/build-push-action@v4
         with:
           context: .
           file: ./deploy/docker/signer.Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/signer:latest
+          tags: ${{ steps.image-tags.outputs.signer_tags }}
       - name: Build and push PdfSigner
         uses: docker/build-push-action@v4
         with:
           context: ./pdfsigner
           file: ./pdfsigner/Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/pdfsigner:latest
+          tags: ${{ steps.image-tags.outputs.pdfsigner_tags }}
