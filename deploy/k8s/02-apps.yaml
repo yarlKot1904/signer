@@ -18,7 +18,7 @@ spec:
         emptyDir: {}
       containers:
       - name: uploader
-        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-5
+        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-6
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -108,7 +108,7 @@ spec:
     spec:
       containers:
       - name: downloader
-        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-5
+        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-6
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8081
@@ -191,7 +191,7 @@ spec:
     spec:
       containers:
       - name: mailer
-        image: ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-5
+        image: ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-6
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8083
@@ -262,7 +262,7 @@ spec:
     spec:
       containers:
       - name: signer
-        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-5
+        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-6
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8082
@@ -361,7 +361,7 @@ spec:
     spec:
       containers:
       - name: pdfsigner
-        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-5
+        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-6
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8090

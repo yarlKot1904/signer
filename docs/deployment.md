@@ -9,17 +9,17 @@ Images referenced in Kubernetes manifests use GHCR.
 
 For ArgoCD and Kubernetes, prefer immutable tags such as a release git tag or `sha-<commit>`:
 
-- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-5`
-- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-5`
-- `ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-5`
-- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-5`
-- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-5`
+- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-6`
+- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-6`
+- `ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-6`
+- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-6`
+- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-6`
 
 The GitHub Actions workflow publishes:
 
 - `latest` on pushes to `main`
 - `sha-<12-char-commit>` on every workflow run
-- the git tag name itself on tag pushes such as `deploy-2026-04-10-5`
+- the git tag name itself on tag pushes such as `deploy-2026-04-10-6`
 
 ## Docker Compose
 
