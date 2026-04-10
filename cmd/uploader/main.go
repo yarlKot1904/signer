@@ -22,6 +22,7 @@ import (
 	"github.com/tus/tusd/v2/pkg/s3store"
 	"github.com/yarlKot1904/signer/internal/config"
 	"github.com/yarlKot1904/signer/internal/infra"
+	"github.com/yarlKot1904/signer/internal/logutil"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -269,7 +270,7 @@ func handleUploadComplete(
 	}
 	taskJSON, err := json.Marshal(task)
 	if err != nil {
-		log.Printf("Failed to marshal task for %s: %v", downloadToken, err)
+		log.Printf("Failed to marshal task for %s: %v", logutil.MaskToken(downloadToken), err)
 		_ = rdb.Del(opCtx, "doc:"+downloadToken).Err()
 		_ = deleteUploadArtifacts(opCtx, s3Client, bucket, finalKey)
 		return
@@ -292,10 +293,7 @@ func handleUploadComplete(
 		return
 	}
 
-	log.Printf("Upload complete: file=%s email=%s finalKey=%s token=%s", filename, email, finalKey, downloadToken)
-	log.Printf("Download: http://signer.local/download/%s", downloadToken)
-	log.Printf("View: http://signer.local/view/%s", downloadToken)
-	log.Printf("Sign: http://signer.local/sign.html?token=%s", downloadToken)
+	log.Printf("Upload complete: file=%s email=%s finalKey=%s token=%s links=prepared", filename, logutil.MaskEmail(email), finalKey, logutil.MaskToken(downloadToken))
 }
 
 func handleVerifyUploadComplete(
@@ -368,7 +366,7 @@ func handleVerifyUploadComplete(
 		log.Printf("Warning: could not schedule verify cleanup for %s: %v", finalKey, err)
 	}
 
-	log.Printf("Stored verify upload: token=%s key=%s", verifyToken, finalKey)
+	log.Printf("Stored verify upload: token=%s key=%s", logutil.MaskToken(verifyToken), finalKey)
 }
 
 func moveUploadedObject(ctx context.Context, s3Client *s3.Client, bucket, oldKey, keyPrefix string) (string, error) {

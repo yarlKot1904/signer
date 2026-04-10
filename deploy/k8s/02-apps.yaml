@@ -18,7 +18,7 @@ spec:
         emptyDir: {}
       containers:
       - name: uploader
-        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-2
+        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-3
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -108,7 +108,7 @@ spec:
     spec:
       containers:
       - name: downloader
-        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-2
+        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-3
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8081
@@ -177,6 +177,77 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: mailer
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mailer
+  template:
+    metadata:
+      labels:
+        app: mailer
+    spec:
+      containers:
+      - name: mailer
+        image: ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-3
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8083
+        env:
+        - name: HTTP_PORT
+          value: "8083"
+        - name: MAILER_LOG_BODY
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MAILER_LOG_BODY}}
+        - name: HTTP_READ_HEADER_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_HEADER_TIMEOUT}}
+        - name: HTTP_READ_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_TIMEOUT}}
+        - name: HTTP_WRITE_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_WRITE_TIMEOUT}}
+        - name: HTTP_IDLE_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_IDLE_TIMEOUT}}
+        - name: SHUTDOWN_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: SHUTDOWN_TIMEOUT}}
+        readinessProbe:
+          httpGet: {path: /health, port: 8083}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 8083}
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailer-svc
+  namespace: default
+spec:
+  ports:
+  - port: 8083
+    targetPort: 8083
+  selector:
+    app: mailer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: signer
   namespace: default
 spec:
@@ -191,7 +262,7 @@ spec:
     spec:
       containers:
       - name: signer
-        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-2
+        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-3
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8082
@@ -216,6 +287,10 @@ spec:
           valueFrom: {configMapKeyRef: {name: signer-config, key: REDIS_ADDR}}
         - name: PDFSIGN_URL
           valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGN_URL}}
+        - name: MAILER_URL
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MAILER_URL}}
+        - name: PUBLIC_BASE_URL
+          valueFrom: {configMapKeyRef: {name: signer-config, key: PUBLIC_BASE_URL}}
         - name: MASTER_KEY_HEX
           valueFrom: {secretKeyRef: {name: signer-secrets, key: MASTER_KEY_HEX}}
         - name: HTTP_READ_HEADER_TIMEOUT
@@ -286,7 +361,7 @@ spec:
     spec:
       containers:
       - name: pdfsigner
-        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-2
+        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-3
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8090

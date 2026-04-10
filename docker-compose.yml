@@ -75,6 +75,18 @@ services:
       - HTTP_IDLE_TIMEOUT=${HTTP_IDLE_TIMEOUT:-60s}
       - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-15s}
     depends_on: [minio, redis]
+  mailer:
+    build:
+      context: .
+      dockerfile: deploy/docker/mailer.Dockerfile
+    environment:
+      - HTTP_PORT=8083
+      - MAILER_LOG_BODY=${MAILER_LOG_BODY:-false}
+      - HTTP_READ_HEADER_TIMEOUT=${HTTP_READ_HEADER_TIMEOUT:-5s}
+      - HTTP_READ_TIMEOUT=${HTTP_READ_TIMEOUT:-15s}
+      - HTTP_WRITE_TIMEOUT=${HTTP_WRITE_TIMEOUT:-120s}
+      - HTTP_IDLE_TIMEOUT=${HTTP_IDLE_TIMEOUT:-60s}
+      - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-15s}
   signer:
     build:
       context: .
@@ -87,6 +99,8 @@ services:
       - MINIO_REGION=us-east-1
       - REDIS_ADDR=redis:6379
       - PDFSIGN_URL=http://pdfsigner:8090/sign
+      - MAILER_URL=http://mailer:8083/send
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost}
       - MASTER_KEY_HEX=${MASTER_KEY_HEX:?set MASTER_KEY_HEX}
       - DB_DSN=${DB_DSN:?set DB_DSN}
       - RABBIT_URL=${RABBIT_URL:?set RABBIT_URL}
@@ -99,7 +113,7 @@ services:
       - DEPENDENCY_TIMEOUT=${DEPENDENCY_TIMEOUT:-30s}
       - PDFSIGN_TIMEOUT=${PDFSIGN_TIMEOUT:-60s}
       - JSON_MAX_BYTES=${JSON_MAX_BYTES:-1048576}
-    depends_on: [postgres, rabbitmq, pdfsigner, minio]
+    depends_on: [postgres, rabbitmq, pdfsigner, minio, mailer]
 
   postgres:
     image: postgres:15-alpine

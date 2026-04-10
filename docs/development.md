@@ -12,6 +12,7 @@
 cmd/
   uploader/
   downloader/
+  mailer/
   signer/
 internal/
   config/
@@ -67,8 +68,8 @@ Useful endpoints after startup:
 
 1. Open `http://localhost/`.
 2. Enter an email and upload one PDF.
-3. Check `signer` logs to get the OTP in prototype mode.
-4. Open the signing page from the logged link.
+3. Check `mailer` delivery logs for the mock notification flow.
+4. If you need the full OTP and links in local debugging, temporarily set `MAILER_LOG_BODY=true` before starting the stack.
 5. Submit the OTP to sign the document.
 6. Download the signed PDF through `/download/<token>?signed=1`.
 7. Verify the result through `/api/verify`.
@@ -104,6 +105,7 @@ pdfsig C:\path\to\signed.pdf
 - `uploader` should stay stateless apart from external services.
 - `downloader` must not create or modify signing state.
 - `signer` is the orchestration layer for OTP and signing/verification workflows.
+- `mailer` is the internal notification layer for OTP and link delivery.
 - `pdfsigner` should remain focused on PDF transformation and cryptographic operations.
 - Preserve current prototype behavior unless a task explicitly asks for production hardening.
 - `POST /api/verify` accepts JSON only; upload verification uses `/verify-files/` plus `upload_token`.

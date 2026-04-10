@@ -36,6 +36,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/yarlKot1904/signer/internal/config"
 	"github.com/yarlKot1904/signer/internal/infra"
+	"github.com/yarlKot1904/signer/internal/logutil"
+	"github.com/yarlKot1904/signer/internal/mailer"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -57,8 +59,9 @@ type SigningSession struct {
 	EncryptedPrivKey string
 	CertPEM          string
 
-	SignedS3Key string
-	SignedAt    *time.Time
+	SignedS3Key        string
+	SignedAt           *time.Time
+	NotificationSentAt *time.Time
 }
 
 type TaskMessage struct {
@@ -128,6 +131,8 @@ const (
 
 const verifyCleanupZSetKey = "verify:cleanup"
 
+var errNotificationAlreadySent = errors.New("notification already sent")
+
 var (
 	db         *gorm.DB
 	appCfg     *config.Config
@@ -147,6 +152,9 @@ func main() {
 
 	if appCfg.PDFSignURL == "" {
 		log.Fatal("PDFSIGN_URL is required")
+	}
+	if appCfg.MailerURL == "" {
+		log.Fatal("MAILER_URL is required")
 	}
 
 	masterKey, err = decodeMasterKey(appCfg.MasterKeyHex)
@@ -307,7 +315,7 @@ func processTask(ctx context.Context, body []byte) taskAction {
 		return taskReject
 	}
 	if strings.TrimSpace(task.Token) == "" || strings.TrimSpace(task.Email) == "" || strings.TrimSpace(task.S3Key) == "" {
-		log.Printf("Invalid task payload: token=%q email=%q s3_key=%q", task.Token, task.Email, task.S3Key)
+		log.Printf("Invalid task payload: token=%q email=%q s3_key=%q", logutil.MaskToken(task.Token), logutil.MaskEmail(task.Email), task.S3Key)
 		return taskReject
 	}
 
@@ -323,29 +331,118 @@ func processTask(ctx context.Context, body []byte) taskAction {
 		return taskNackRequeue
 	}
 
-	session := SigningSession{
-		Token:    task.Token,
-		Email:    task.Email,
-		CodeHash: string(hash),
-		S3Key:    task.S3Key,
+	if err := upsertPendingNotification(ctx, task, string(hash)); err != nil {
+		if errors.Is(err, errNotificationAlreadySent) {
+			log.Printf("Duplicate task ignored for token=%s", logutil.MaskToken(task.Token))
+			return taskAck
+		}
+		log.Printf("DB Error: %v", err)
+		return taskNackRequeue
 	}
 
-	result := db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&session)
+	if err := notifyMailer(ctx, buildSigningNotification(task, code)); err != nil {
+		log.Printf("Mailer dispatch failed for token=%s: %v", logutil.MaskToken(task.Token), err)
+		return taskNackRequeue
+	}
+
+	now := time.Now().UTC()
+	result := db.WithContext(ctx).
+		Model(&SigningSession{}).
+		Where("token = ? AND notification_sent_at IS NULL", task.Token).
+		Update("notification_sent_at", &now)
 	if result.Error != nil {
-		log.Printf("DB Error: %v", result.Error)
+		log.Printf("Notification state update failed for token=%s: %v", logutil.MaskToken(task.Token), result.Error)
 		return taskNackRequeue
 	}
 	if result.RowsAffected == 0 {
-		log.Printf("Duplicate task ignored for token=%s", task.Token)
+		log.Printf("Notification state already updated for token=%s", logutil.MaskToken(task.Token))
 		return taskAck
 	}
 
-	log.Printf("==========================================")
-	log.Printf("NEW TASK for %s", task.Email)
-	log.Printf("OTP CODE: %s", code)
-	log.Printf("TOKEN: %s", task.Token)
-	log.Printf("==========================================")
+	log.Printf("Signing session prepared: token=%s recipient=%s notification=queued", logutil.MaskToken(task.Token), logutil.MaskEmail(task.Email))
 	return taskAck
+}
+
+func upsertPendingNotification(ctx context.Context, task TaskMessage, codeHash string) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var session SigningSession
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&session, "token = ?", task.Token)
+		switch {
+		case errors.Is(result.Error, gorm.ErrRecordNotFound):
+			session = SigningSession{
+				Token:    task.Token,
+				Email:    task.Email,
+				CodeHash: codeHash,
+				S3Key:    task.S3Key,
+			}
+			return tx.Create(&session).Error
+		case result.Error != nil:
+			return result.Error
+		case session.NotificationSentAt != nil:
+			return errNotificationAlreadySent
+		default:
+			session.Email = task.Email
+			session.S3Key = task.S3Key
+			session.CodeHash = codeHash
+			session.Attempts = 0
+			return tx.Save(&session).Error
+		}
+	})
+}
+
+func buildSigningNotification(task TaskMessage, code string) mailer.SendRequest {
+	token := url.PathEscape(task.Token)
+	signQuery := url.QueryEscape(task.Token)
+
+	return mailer.SendRequest{
+		Template:    mailer.TemplateSigningOTP,
+		Recipient:   task.Email,
+		MessageID:   task.Token,
+		Correlation: task.Token,
+		Variables: map[string]string{
+			"code":         code,
+			"sign_url":     joinPublicURL(appCfg.PublicBaseURL, "/sign.html?token="+signQuery),
+			"download_url": joinPublicURL(appCfg.PublicBaseURL, "/download/"+token),
+			"view_url":     joinPublicURL(appCfg.PublicBaseURL, "/view/"+token),
+		},
+	}
+}
+
+func joinPublicURL(baseURL, path string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = "http://signer.local"
+	}
+	if strings.HasPrefix(path, "/") {
+		return baseURL + path
+	}
+	return baseURL + "/" + path
+}
+
+func notifyMailer(ctx context.Context, payload mailer.SendRequest) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, appCfg.MailerURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode/100 != 2 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("mailer returned %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+	}
+
+	return nil
 }
 
 func handleSignRequest(w http.ResponseWriter, r *http.Request) {
@@ -375,7 +472,7 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 		"status":     "success",
 		"signed_url": signedURL,
 	})
-	log.Printf("SIGNED URL: http://signer.local%s", signedURL)
+	log.Printf("Document signed successfully: token=%s", logutil.MaskToken(req.Token))
 }
 
 func signDocument(ctx context.Context, req SignRequest) (string, int, error) {
@@ -494,7 +591,7 @@ func signDocument(ctx context.Context, req SignRequest) (string, int, error) {
 			return "", apiErr.Status, apiErr
 		}
 
-		log.Printf("Signing transaction failed for token=%s: %v", req.Token, err)
+		log.Printf("Signing transaction failed for token=%s: %v", logutil.MaskToken(req.Token), err)
 		return "", http.StatusInternalServerError, apiError{Status: http.StatusInternalServerError, Message: "Internal error"}
 	}
 
@@ -555,7 +652,7 @@ func handleVerifyByToken(w http.ResponseWriter, r *http.Request, token string) {
 		return
 	}
 
-	log.Printf("verify by token: token=%s signedKey=%s pdfSha=%s", token, session.SignedS3Key, sha256Hex(pdfBytes))
+	log.Printf("verify by token: token=%s signedKey=%s pdfSha=%s", logutil.MaskToken(token), session.SignedS3Key, sha256Hex(pdfBytes))
 	statusCode, verification, err := verifyStoredServicePDF(r.Context(), pdfBytes, token, session.SignedS3Key)
 	if err != nil {
 		log.Printf("pdf verification error: %v", err)
@@ -594,7 +691,7 @@ func handleVerifyByUploadToken(w http.ResponseWriter, r *http.Request, uploadTok
 		return
 	}
 
-	log.Printf("verify by upload token: uploadToken=%s objectKey=%s pdfSha=%s", uploadToken, meta.S3Key, sha256Hex(pdfBytes))
+	log.Printf("verify by upload token: uploadToken=%s objectKey=%s pdfSha=%s", logutil.MaskToken(uploadToken), meta.S3Key, sha256Hex(pdfBytes))
 	statusCode, verification, err := verifyServiceOwnedPDF(r.Context(), pdfBytes)
 	if err != nil {
 		log.Printf("pdf verification error: %v", err)
@@ -616,7 +713,7 @@ func waitForVerifyUpload(ctx context.Context, uploadToken string) (string, error
 		}
 		lastErr = err
 		if err != nil && !errors.Is(err, redis.Nil) {
-			log.Printf("verify upload redis lookup failed for %s: %v", uploadToken, err)
+			log.Printf("verify upload redis lookup failed for %s: %v", logutil.MaskToken(uploadToken), err)
 		}
 
 		select {
@@ -780,13 +877,13 @@ func verifyServiceOwnedPDF(ctx context.Context, pdfBytes []byte) (int, Verificat
 		}
 		return 0, VerificationResult{}, result.Error
 	}
-	log.Printf("verify uploaded pdf: matched signed_documents record token=%s signedKey=%s hash=%s", signedDoc.Token, signedDoc.SignedS3Key, documentHash)
+	log.Printf("verify uploaded pdf: matched signed_documents record token=%s signedKey=%s hash=%s", logutil.MaskToken(signedDoc.Token), signedDoc.SignedS3Key, documentHash)
 
 	return verifyViaPDFService(ctx, pdfBytes, true, "uploaded PDF matched signed_documents registry")
 }
 
 func verifyStoredServicePDF(ctx context.Context, pdfBytes []byte, token, signedS3Key string) (int, VerificationResult, error) {
-	log.Printf("verify stored service pdf: token=%s signedKey=%s pdfSha=%s", token, signedS3Key, sha256Hex(pdfBytes))
+	log.Printf("verify stored service pdf: token=%s signedKey=%s pdfSha=%s", logutil.MaskToken(token), signedS3Key, sha256Hex(pdfBytes))
 	return verifyViaPDFService(ctx, pdfBytes, true, "stored service PDF verified via token lookup")
 }
 
@@ -963,7 +1060,7 @@ func cleanupVerifyUpload(uploadToken, objectKey string) {
 		log.Printf("Verify upload delete failed for %s: %v", objectKey, err)
 	}
 	if err := redisDB.Del(ctx, "verify:"+uploadToken).Err(); err != nil {
-		log.Printf("Verify upload redis delete failed for %s: %v", uploadToken, err)
+		log.Printf("Verify upload redis delete failed for %s: %v", logutil.MaskToken(uploadToken), err)
 	}
 	if err := redisDB.ZRem(ctx, verifyCleanupZSetKey, objectKey).Err(); err != nil {
 		log.Printf("Verify upload cleanup zset remove failed for %s: %v", objectKey, err)
