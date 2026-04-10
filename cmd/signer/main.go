@@ -134,12 +134,14 @@ const verifyCleanupZSetKey = "verify:cleanup"
 var errNotificationAlreadySent = errors.New("notification already sent")
 
 var (
-	db         *gorm.DB
-	appCfg     *config.Config
-	s3Client   *s3.Client
-	redisDB    *redis.Client
-	masterKey  []byte
-	httpClient *http.Client
+	db               *gorm.DB
+	appCfg           *config.Config
+	s3Client         *s3.Client
+	redisDB          *redis.Client
+	masterKey        []byte
+	httpClient       *http.Client
+	signDocumentFunc = signDocument
+	notifyMailerFunc = notifyMailer
 )
 
 func main() {
@@ -408,10 +410,17 @@ func buildSigningNotification(task TaskMessage, code string) mailer.SendRequest 
 	}
 }
 
-func buildSignedDocumentNotification(recipient, token string) mailer.SendRequest {
-	escapedToken := url.PathEscape(token)
-	signedDownloadURL := joinPublicURL(appCfg.PublicBaseURL, "/download/"+escapedToken+"?signed=1")
-	signedViewURL := joinPublicURL(appCfg.PublicBaseURL, "/view/"+escapedToken+"?signed=1")
+func buildSignedDocumentNotification(recipient, token, signedURL string) mailer.SendRequest {
+	signedDownloadPath := strings.TrimSpace(signedURL)
+	if signedDownloadPath == "" {
+		escapedToken := url.PathEscape(token)
+		signedDownloadPath = "/download/" + escapedToken + "?signed=1"
+	}
+
+	signedViewPath := signedDownloadPath
+	if strings.HasPrefix(signedViewPath, "/download/") {
+		signedViewPath = "/view/" + strings.TrimPrefix(signedViewPath, "/download/")
+	}
 
 	return mailer.SendRequest{
 		Template:    mailer.TemplateSignedDocument,
@@ -419,8 +428,8 @@ func buildSignedDocumentNotification(recipient, token string) mailer.SendRequest
 		MessageID:   token + ":signed",
 		Correlation: token,
 		Variables: map[string]string{
-			"signed_download_url": signedDownloadURL,
-			"signed_view_url":     signedViewURL,
+			"signed_download_url": joinPublicURL(appCfg.PublicBaseURL, signedDownloadPath),
+			"signed_view_url":     joinPublicURL(appCfg.PublicBaseURL, signedViewPath),
 		},
 	}
 }
@@ -479,15 +488,17 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	signedURL, recipient, statusCode, err := signDocument(r.Context(), req)
+	signedURL, recipient, statusCode, err := signDocumentFunc(r.Context(), req)
 	if err != nil {
 		writeJSON(w, statusCode, map[string]string{"error": err.Error()})
 		return
 	}
 
 	notifyCtx, cancel := context.WithTimeout(context.Background(), appCfg.DependencyTimeout)
-	if err := notifyMailer(notifyCtx, buildSignedDocumentNotification(recipient, req.Token)); err != nil {
+	if err := notifyMailerFunc(notifyCtx, buildSignedDocumentNotification(recipient, req.Token, signedURL)); err != nil {
 		log.Printf("Signed document notification failed for token=%s recipient=%s: %v", logutil.MaskToken(req.Token), logutil.MaskEmail(recipient), err)
+	} else {
+		log.Printf("Signed document notification queued: token=%s recipient=%s", logutil.MaskToken(req.Token), logutil.MaskEmail(recipient))
 	}
 	cancel()
 
