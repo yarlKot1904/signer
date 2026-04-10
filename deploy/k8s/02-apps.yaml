@@ -13,12 +13,18 @@ spec:
       labels:
         app: uploader
     spec:
+      volumes:
+      - name: uploader-tmp
+        emptyDir: {}
       containers:
       - name: uploader
-        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-1
+        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-2
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
+        volumeMounts:
+        - name: uploader-tmp
+          mountPath: /tmp
         env:
         - name: MINIO_ENDPOINT
           valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_ENDPOINT}}
@@ -102,7 +108,7 @@ spec:
     spec:
       containers:
       - name: downloader
-        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-1
+        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-2
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8081
@@ -185,7 +191,7 @@ spec:
     spec:
       containers:
       - name: signer
-        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-1
+        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-2
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8082
@@ -280,7 +286,7 @@ spec:
     spec:
       containers:
       - name: pdfsigner
-        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-1
+        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-2
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8090
