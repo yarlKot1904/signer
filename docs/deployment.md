@@ -5,12 +5,20 @@
 - Docker Compose for local development
 - Kubernetes for cluster deployment
 
-Images referenced in Kubernetes manifests use GHCR:
+Images referenced in Kubernetes manifests use GHCR.
 
-- `ghcr.io/yarlkot1904/signer/uploader:latest`
-- `ghcr.io/yarlkot1904/signer/downloader:latest`
-- `ghcr.io/yarlkot1904/signer/signer:latest`
-- `ghcr.io/yarlkot1904/signer/pdfsigner:latest`
+For ArgoCD and Kubernetes, prefer immutable tags such as a release git tag or `sha-<commit>`:
+
+- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-1`
+- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-1`
+- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-1`
+- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-1`
+
+The GitHub Actions workflow publishes:
+
+- `latest` on pushes to `main`
+- `sha-<12-char-commit>` on every workflow run
+- the git tag name itself on tag pushes such as `deploy-2026-04-10-1`
 
 ## Docker Compose
 
@@ -190,4 +198,4 @@ Kubernetes persistent volume claims:
 - Signed PDFs do not replace original PDFs.
 - `pdfsigner` exposes `/health` for readiness and liveness probes in Kubernetes.
 - Replace placeholder secret values in `00-secrets-config.yaml` before applying manifests.
-- Replace fixed example image tags in `02-apps.yaml` with your published immutable tags or digests.
+- Keep `02-apps.yaml` pinned to a published immutable tag or digest for ArgoCD syncs.
