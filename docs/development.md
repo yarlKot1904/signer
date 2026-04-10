@@ -71,8 +71,9 @@ Useful endpoints after startup:
 3. Check `mailer` logs for the OTP, sign link, download link, and preview link.
 4. `MAILER_LOG_BODY=true` is the default prototype setting for easier end-to-end testing.
 5. Submit the OTP to sign the document.
-6. Download the signed PDF through `/download/<token>?signed=1`.
-7. Verify the result through `/api/verify`.
+6. Check `mailer` logs again for the signed-document download and preview links.
+7. Download the signed PDF through `/download/<token>?signed=1`.
+8. Verify the result through `/api/verify`.
 
 ## Verification Commands
 

@@ -53,6 +53,7 @@ Responsibilities:
 - consumes RabbitMQ signing tasks
 - generates OTP sessions in PostgreSQL
 - calls `mailer` with OTP and document links
+- calls `mailer` again with the signed-document link after successful signing
 - validates OTP submissions via `POST /api/sign`
 - generates RSA-2048 key pairs and self-signed X.509 certificates
 - encrypts the generated private key with AES-GCM using `MASTER_KEY_HEX`
@@ -170,7 +171,8 @@ Traefik Ingress routes `signer.local`:
 10. `signer` calls `pdfsigner /sign`.
 11. `pdfsigner` stamps and signs the PDF.
 12. `signer` stores the signed PDF under `signed/<original-key>`.
-13. `downloader` serves the signed file through `/download/<token>?signed=1`.
+13. `signer` calls `mailer` with signed download and preview links.
+14. `downloader` serves the signed file through `/download/<token>?signed=1`.
 
 ## End-to-End Verification Flow
 
