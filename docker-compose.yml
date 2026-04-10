@@ -1,23 +1,21 @@
-version: '3.8'
-
 services:
   gateway:
-      image: nginx:alpine
-      ports:
-        - "80:80"
-      volumes:
-        - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      depends_on:
-        - uploader
-        - downloader
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - uploader
+      - downloader
+      - signer
   minio:
     image: minio/minio
     ports:
-      - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -27,14 +25,16 @@ services:
     depends_on: [minio]
     entrypoint: >
       /bin/sh -c "
-      until /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin; do echo '...waiting minio...'; sleep 1; done;
+      until /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do echo '...waiting minio...'; sleep 1; done;
       /usr/bin/mc mb myminio/docs-storage --ignore-existing;
       exit 0;
       "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
 
   redis:
     image: redis:alpine
-    ports: ["6379:6379"]
 
   uploader:
     build:
@@ -42,11 +42,19 @@ services:
       dockerfile: deploy/docker/uploader.Dockerfile
     environment:
       - MINIO_ENDPOINT=http://minio:9000
-      - MINIO_ID=minioadmin
-      - MINIO_SECRET=minioadmin
+      - MINIO_ID=${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      - MINIO_SECRET=${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
       - MINIO_BUCKET=docs-storage
       - REDIS_ADDR=redis:6379
       - HTTP_PORT=8080
+      - RABBIT_URL=${RABBIT_URL:?set RABBIT_URL}
+      - HTTP_READ_HEADER_TIMEOUT=${HTTP_READ_HEADER_TIMEOUT:-5s}
+      - HTTP_READ_TIMEOUT=${HTTP_READ_TIMEOUT:-15s}
+      - HTTP_WRITE_TIMEOUT=${HTTP_WRITE_TIMEOUT:-120s}
+      - HTTP_IDLE_TIMEOUT=${HTTP_IDLE_TIMEOUT:-60s}
+      - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-15s}
+      - DEPENDENCY_TIMEOUT=${DEPENDENCY_TIMEOUT:-30s}
+      - UPLOAD_MAX_BYTES=${UPLOAD_MAX_BYTES:-10485760}
     depends_on: [minio, redis, rabbitmq]
 
   downloader:
@@ -55,12 +63,17 @@ services:
       dockerfile: deploy/docker/downloader.Dockerfile
     environment:
       - MINIO_ENDPOINT=http://minio:9000
-      - MINIO_ID=minioadmin
-      - MINIO_SECRET=minioadmin
+      - MINIO_ID=${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      - MINIO_SECRET=${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
       - MINIO_BUCKET=docs-storage
       - REDIS_ADDR=redis:6379
       - HTTP_PORT=8081
-      - DB_DSN=postgres://user:password@postgres:5432/signer_db
+      - DB_DSN=${DB_DSN:?set DB_DSN}
+      - HTTP_READ_HEADER_TIMEOUT=${HTTP_READ_HEADER_TIMEOUT:-5s}
+      - HTTP_READ_TIMEOUT=${HTTP_READ_TIMEOUT:-15s}
+      - HTTP_WRITE_TIMEOUT=${HTTP_WRITE_TIMEOUT:-120s}
+      - HTTP_IDLE_TIMEOUT=${HTTP_IDLE_TIMEOUT:-60s}
+      - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-15s}
     depends_on: [minio, redis]
   signer:
     build:
@@ -68,45 +81,50 @@ services:
       dockerfile: deploy/docker/signer.Dockerfile
     environment:
       - MINIO_ENDPOINT=http://minio:9000
-      - MINIO_ID=minioadmin
-      - MINIO_SECRET=minioadmin
+      - MINIO_ID=${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      - MINIO_SECRET=${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
       - MINIO_BUCKET=docs-storage
       - MINIO_REGION=us-east-1
       - REDIS_ADDR=redis:6379
       - PDFSIGN_URL=http://pdfsigner:8090/sign
-      - MASTER_KEY_HEX=__PUT_64_HEX_HERE__
-      - DB_DSN=postgres://user:password@postgres:5432/signer_db
-      - RABBIT_URL=amqp://user:password@rabbitmq:5672/
+      - MASTER_KEY_HEX=${MASTER_KEY_HEX:?set MASTER_KEY_HEX}
+      - DB_DSN=${DB_DSN:?set DB_DSN}
+      - RABBIT_URL=${RABBIT_URL:?set RABBIT_URL}
       - HTTP_PORT=8082
-    ports:
-      - "8082:8082" 
+      - HTTP_READ_HEADER_TIMEOUT=${HTTP_READ_HEADER_TIMEOUT:-5s}
+      - HTTP_READ_TIMEOUT=${HTTP_READ_TIMEOUT:-15s}
+      - HTTP_WRITE_TIMEOUT=${HTTP_WRITE_TIMEOUT:-120s}
+      - HTTP_IDLE_TIMEOUT=${HTTP_IDLE_TIMEOUT:-60s}
+      - SHUTDOWN_TIMEOUT=${SHUTDOWN_TIMEOUT:-15s}
+      - DEPENDENCY_TIMEOUT=${DEPENDENCY_TIMEOUT:-30s}
+      - PDFSIGN_TIMEOUT=${PDFSIGN_TIMEOUT:-60s}
+      - JSON_MAX_BYTES=${JSON_MAX_BYTES:-1048576}
     depends_on: [postgres, rabbitmq, pdfsigner, minio]
 
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: signer_db
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
     ports:
-      - "5672:5672"
       - "15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: user
-      RABBITMQ_DEFAULT_PASS: password
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER:?set RABBIT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASS:?set RABBIT_PASS}
   pdfsigner:
     build:
       context: ./pdfsigner
       dockerfile: Dockerfile
-    ports:
-      - "8090:8090"
+    environment:
+      - PDFSIGNER_MAX_FILE_SIZE=${PDFSIGNER_MAX_FILE_SIZE:-10MB}
+      - PDFSIGNER_MAX_REQUEST_SIZE=${PDFSIGNER_MAX_REQUEST_SIZE:-11MB}
+      - PDFSIGNER_MAX_HEADER_SIZE=${PDFSIGNER_MAX_HEADER_SIZE:-16KB}
 
 
 volumes:

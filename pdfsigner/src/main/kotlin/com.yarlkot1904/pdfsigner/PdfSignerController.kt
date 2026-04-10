@@ -33,11 +33,24 @@ class PdfSignerController(
         @RequestPart("keyPem") keyPem: String,
         @RequestPart("documentId") documentId: String
     ): ResponseEntity<ByteArray> {
-        val signed = signingService.signPdf(pdf.bytes, certPem, keyPem, documentId)
-        return ResponseEntity
-            .ok()
-            .contentType(MediaType.APPLICATION_PDF)
-            .body(signed)
+        return try {
+            val pdfBytes = readPdfBytes(pdf)
+            val signed = signingService.signPdf(pdfBytes, certPem, keyPem, documentId)
+            ResponseEntity
+                .ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(signed)
+        } catch (_: IOException) {
+            ResponseEntity
+                .badRequest()
+                .contentType(MediaType.TEXT_PLAIN)
+                .body("Invalid PDF".toByteArray())
+        } catch (_: IllegalArgumentException) {
+            ResponseEntity
+                .badRequest()
+                .contentType(MediaType.TEXT_PLAIN)
+                .body("Invalid PDF".toByteArray())
+        }
     }
 
     @PostMapping(
@@ -48,14 +61,8 @@ class PdfSignerController(
     fun verify(
         @RequestPart("pdf") pdf: MultipartFile
     ): ResponseEntity<VerificationResult> {
-        if (pdf.isEmpty) {
-            return ResponseEntity
-                .badRequest()
-                .body(VerificationResult.error("uploaded PDF is empty"))
-        }
-
         return try {
-            ResponseEntity.ok(signingService.verifyPdf(pdf.bytes))
+            ResponseEntity.ok(signingService.verifyPdf(readPdfBytes(pdf)))
         } catch (_: IOException) {
             ResponseEntity
                 .badRequest()
@@ -65,5 +72,12 @@ class PdfSignerController(
                 .badRequest()
                 .body(VerificationResult.error("Invalid PDF"))
         }
+    }
+
+    private fun readPdfBytes(pdf: MultipartFile): ByteArray {
+        require(!pdf.isEmpty) { "uploaded PDF is empty" }
+        val bytes = pdf.bytes
+        require(signingService.isPdf(bytes)) { "invalid pdf" }
+        return bytes
     }
 }

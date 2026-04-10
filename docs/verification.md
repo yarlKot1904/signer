@@ -1,6 +1,7 @@
 # PDF Verification
 
 The public verification endpoint is `POST /api/verify` on the `signer` service.
+It accepts `application/json` only.
 
 There is also a browser UI at `/verify.html` served by the existing static frontend.
 

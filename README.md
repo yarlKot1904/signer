@@ -41,24 +41,22 @@ Prerequisites:
 Start the full stack:
 
 ```powershell
+Copy-Item .env.example .env
 docker compose up --build
 ```
 
 Open:
 
 - App UI: `http://localhost/`
-- Signer API: `http://localhost/api/`
 - MinIO console: `http://localhost:9001/`
 - RabbitMQ management: `http://localhost:15672/`
 
 Important local defaults:
 
-- MinIO user/password: `minioadmin` / `minioadmin`
-- RabbitMQ user/password: `user` / `password`
-- PostgreSQL DSN: `postgres://user:password@postgres:5432/signer_db`
 - MinIO bucket: `docs-storage`
+- local secrets and connection strings are loaded from `.env`
 
-Before first real signing, replace the placeholder `MASTER_KEY_HEX` in `docker-compose.yml` with a 64-character hex key.
+Before first run, replace placeholder values in `.env` with real local secrets.
 
 Example PowerShell command:
 
@@ -73,6 +71,7 @@ Example PowerShell command:
 - `GET /view/<token>`
 - `POST /api/sign`
 - `POST /api/verify`
+- `GET /health` on each Go service
 
 See [docs/api.md](docs/api.md) for request and response details.
 

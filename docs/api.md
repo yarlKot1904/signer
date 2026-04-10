@@ -106,6 +106,8 @@ Input modes:
 `upload_token` is produced by the browser flow after a Tus upload to `/verify-files/`.
 The verify-upload path uses temporary MinIO objects under `verify/...`; both the object and its `.info` sidecar are deleted after verification or TTL cleanup.
 
+`POST /api/verify` accepts `application/json` only. Direct multipart upload to this route is not supported.
+
 Response shape:
 
 ```json

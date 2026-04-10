@@ -1,6 +1,10 @@
 package config
 
-import "github.com/kelseyhightower/envconfig"
+import (
+	"time"
+
+	"github.com/kelseyhightower/envconfig"
+)
 
 type Config struct {
 	MinioEndpoint string `envconfig:"MINIO_ENDPOINT"`
@@ -18,6 +22,17 @@ type Config struct {
 
 	PDFSignURL   string `envconfig:"PDFSIGN_URL"`
 	MasterKeyHex string `envconfig:"MASTER_KEY_HEX"`
+
+	HTTPReadHeaderTimeout time.Duration `envconfig:"HTTP_READ_HEADER_TIMEOUT" default:"5s"`
+	HTTPReadTimeout       time.Duration `envconfig:"HTTP_READ_TIMEOUT" default:"15s"`
+	HTTPWriteTimeout      time.Duration `envconfig:"HTTP_WRITE_TIMEOUT" default:"120s"`
+	HTTPIdleTimeout       time.Duration `envconfig:"HTTP_IDLE_TIMEOUT" default:"60s"`
+	ShutdownTimeout       time.Duration `envconfig:"SHUTDOWN_TIMEOUT" default:"15s"`
+	DependencyTimeout     time.Duration `envconfig:"DEPENDENCY_TIMEOUT" default:"30s"`
+	PDFSignTimeout        time.Duration `envconfig:"PDFSIGN_TIMEOUT" default:"60s"`
+
+	UploadMaxBytes int64 `envconfig:"UPLOAD_MAX_BYTES" default:"10485760"`
+	JSONMaxBytes   int64 `envconfig:"JSON_MAX_BYTES" default:"1048576"`
 }
 
 func Load() (*Config, error) {

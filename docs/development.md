@@ -51,6 +51,7 @@ Set-Location .\pdfsigner
 From the repository root:
 
 ```powershell
+Copy-Item .env.example .env
 docker compose up --build
 ```
 
@@ -85,8 +86,11 @@ curl.exe -s -X POST http://localhost/api/verify `
 By uploaded PDF:
 
 ```powershell
+# First upload the PDF through the browser UI at /verify.html or any Tus client to /verify-files/
+# and obtain the upload token used as verifyToken metadata.
 curl.exe -s -X POST http://localhost/api/verify `
-  -F "pdf=@C:\path\to\signed.pdf;type=application/pdf"
+  -H "Content-Type: application/json" `
+  -d "{\"upload_token\":\"<upload-token>\"}"
 ```
 
 Optional external validation:
@@ -102,3 +106,4 @@ pdfsig C:\path\to\signed.pdf
 - `signer` is the orchestration layer for OTP and signing/verification workflows.
 - `pdfsigner` should remain focused on PDF transformation and cryptographic operations.
 - Preserve current prototype behavior unless a task explicitly asks for production hardening.
+- `POST /api/verify` accepts JSON only; upload verification uses `/verify-files/` plus `upload_token`.
