@@ -2,6 +2,18 @@ server:
   port: 8090
   max-http-request-header-size: ${PDFSIGNER_MAX_HEADER_SIZE:16KB}
 
+management:
+  server:
+    port: ${PDFSIGNER_MANAGEMENT_PORT:8091}
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 spring:
   servlet:
     multipart:

@@ -38,6 +38,7 @@ import (
 	"github.com/yarlKot1904/signer/internal/infra"
 	"github.com/yarlKot1904/signer/internal/logutil"
 	"github.com/yarlKot1904/signer/internal/mailer"
+	appmetrics "github.com/yarlKot1904/signer/internal/metrics"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -166,6 +167,7 @@ func main() {
 
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	appmetrics.StartServer(appCtx, appCfg.MetricsPort, "Signer", appCfg.ShutdownTimeout)
 
 	httpClient = &http.Client{
 		Timeout: appCfg.PDFSignTimeout,
@@ -245,12 +247,12 @@ func main() {
 	go consumeTasks(appCtx, msgs)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/sign", handleSignRequest)
-	mux.HandleFunc("/api/verify", handleVerifyRequest)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/sign", appmetrics.InstrumentHandlerFunc("signer", "/api/sign", handleSignRequest))
+	mux.HandleFunc("/api/verify", appmetrics.InstrumentHandlerFunc("signer", "/api/verify", handleVerifyRequest))
+	mux.HandleFunc("/health", appmetrics.InstrumentHandlerFunc("signer", "/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	}))
 
 	server := &http.Server{
 		Addr:              ":" + appCfg.HTTPPort,
@@ -311,12 +313,19 @@ func consumeTasks(appCtx context.Context, msgs <-chan amqp.Delivery) {
 }
 
 func processTask(ctx context.Context, body []byte) taskAction {
+	taskResult := "error"
+	defer func() {
+		appmetrics.WorkerTasks.WithLabelValues(taskResult).Inc()
+	}()
+
 	var task TaskMessage
 	if err := json.Unmarshal(body, &task); err != nil {
+		taskResult = "invalid"
 		log.Printf("Bad task JSON: %v", err)
 		return taskReject
 	}
 	if strings.TrimSpace(task.Token) == "" || strings.TrimSpace(task.Email) == "" || strings.TrimSpace(task.S3Key) == "" {
+		taskResult = "invalid"
 		log.Printf("Invalid task payload: token=%q email=%q s3_key=%q", logutil.MaskToken(task.Token), logutil.MaskEmail(task.Email), task.S3Key)
 		return taskReject
 	}
@@ -335,12 +344,16 @@ func processTask(ctx context.Context, body []byte) taskAction {
 
 	if err := upsertPendingNotification(ctx, task, string(hash)); err != nil {
 		if errors.Is(err, errNotificationAlreadySent) {
+			taskResult = "duplicate"
+			appmetrics.OTPSessionsCreated.WithLabelValues("duplicate").Inc()
 			log.Printf("Duplicate task ignored for token=%s", logutil.MaskToken(task.Token))
 			return taskAck
 		}
+		appmetrics.OTPSessionsCreated.WithLabelValues("error").Inc()
 		log.Printf("DB Error: %v", err)
 		return taskNackRequeue
 	}
+	appmetrics.OTPSessionsCreated.WithLabelValues("success").Inc()
 
 	if err := notifyMailer(ctx, buildSigningNotification(task, code)); err != nil {
 		log.Printf("Mailer dispatch failed for token=%s: %v", logutil.MaskToken(task.Token), err)
@@ -361,6 +374,7 @@ func processTask(ctx context.Context, body []byte) taskAction {
 		return taskAck
 	}
 
+	taskResult = "success"
 	log.Printf("Signing session prepared: token=%s recipient=%s notification=queued", logutil.MaskToken(task.Token), logutil.MaskEmail(task.Email))
 	return taskAck
 }
@@ -445,7 +459,14 @@ func joinPublicURL(baseURL, path string) string {
 	return baseURL + "/" + path
 }
 
-func notifyMailer(ctx context.Context, payload mailer.SendRequest) error {
+func notifyMailer(ctx context.Context, payload mailer.SendRequest) (retErr error) {
+	start := time.Now()
+	defer func() {
+		result := appmetrics.ResultFromErr(retErr)
+		appmetrics.MailerNotifications.WithLabelValues(payload.Template, result).Inc()
+		appmetrics.ObserveDependency("signer", "mailer", "send", start, retErr)
+	}()
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -473,6 +494,7 @@ func notifyMailer(ctx context.Context, payload mailer.SendRequest) error {
 
 func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		appmetrics.SignRequests.WithLabelValues("bad_request").Inc()
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -481,9 +503,11 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		var apiErr apiError
 		if errors.As(err, &apiErr) {
+			appmetrics.SignRequests.WithLabelValues("bad_request").Inc()
 			writeJSON(w, apiErr.Status, map[string]string{"error": apiErr.Message})
 			return
 		}
+		appmetrics.SignRequests.WithLabelValues("bad_request").Inc()
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Bad Request"})
 		return
 	}
@@ -509,15 +533,20 @@ func handleSignRequest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Document signed successfully: token=%s", logutil.MaskToken(req.Token))
 }
 
-func signDocument(ctx context.Context, req SignRequest) (string, string, int, error) {
+func signDocument(ctx context.Context, req SignRequest) (signedURL string, recipient string, statusCode int, retErr error) {
+	start := time.Now()
+	defer func() {
+		result := signResult(statusCode, retErr)
+		appmetrics.SignRequests.WithLabelValues(result).Inc()
+		appmetrics.SignDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
+	}()
+
 	if strings.TrimSpace(req.Token) == "" || strings.TrimSpace(req.Password) == "" {
 		return "", "", http.StatusBadRequest, apiError{Status: http.StatusBadRequest, Message: "token and password are required"}
 	}
 
 	var signedKey string
 	signedStored := false
-	signedURL := ""
-	recipient := ""
 
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var session SigningSession
@@ -530,6 +559,7 @@ func signDocument(ctx context.Context, req SignRequest) (string, string, int, er
 		}
 
 		if session.Attempts >= MaxAttempts {
+			appmetrics.OTPAttempts.WithLabelValues("blocked").Inc()
 			return apiError{Status: http.StatusForbidden, Message: "Too many attempts. Session blocked."}
 		}
 		if session.IsUsed {
@@ -541,26 +571,34 @@ func signDocument(ctx context.Context, req SignRequest) (string, string, int, er
 			if saveErr := tx.Save(&session).Error; saveErr != nil {
 				return apiError{Status: http.StatusInternalServerError, Message: "Internal error"}
 			}
+			appmetrics.OTPAttempts.WithLabelValues("invalid").Inc()
 			msg := fmt.Sprintf("Invalid code. Attempts remaining: %d", max(0, MaxAttempts-session.Attempts))
 			return apiError{Status: http.StatusUnauthorized, Message: msg}
 		}
+		appmetrics.OTPAttempts.WithLabelValues("success").Inc()
 
+		keyStart := time.Now()
 		privKey, err := rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
+			appmetrics.KeyGenerationDuration.WithLabelValues("error").Observe(time.Since(keyStart).Seconds())
 			return apiError{Status: http.StatusInternalServerError, Message: "Key gen failed"}
 		}
 
 		certPEM, keyPEM, err := generateSelfSignedCertPEM(session.Email, privKey)
 		if err != nil {
+			appmetrics.KeyGenerationDuration.WithLabelValues("error").Observe(time.Since(keyStart).Seconds())
 			return apiError{Status: http.StatusInternalServerError, Message: "Cert gen failed"}
 		}
+		appmetrics.KeyGenerationDuration.WithLabelValues("success").Observe(time.Since(keyStart).Seconds())
 
 		encryptedPrivKey, err := encryptAES(masterKey, keyPEM)
 		if err != nil {
 			return apiError{Status: http.StatusInternalServerError, Message: "Encryption failed"}
 		}
 
+		depStart := time.Now()
 		pdfBytes, err := getObjectBytes(ctx, s3Client, appCfg.MinioBucket, session.S3Key)
+		appmetrics.ObserveDependency("signer", "minio", "s3_get", depStart, err)
 		if err != nil {
 			return apiError{Status: http.StatusInternalServerError, Message: "Failed to load original PDF"}
 		}
@@ -572,7 +610,11 @@ func signDocument(ctx context.Context, req SignRequest) (string, string, int, er
 		}
 
 		signedKey = "signed/" + session.S3Key
-		if err := putObjectBytes(ctx, s3Client, appCfg.MinioBucket, signedKey, signedPDF, "application/pdf"); err != nil {
+		depStart = time.Now()
+		err = putObjectBytes(ctx, s3Client, appCfg.MinioBucket, signedKey, signedPDF, "application/pdf")
+		appmetrics.ObserveDependency("signer", "minio", "s3_put", depStart, err)
+		appmetrics.SignedPDFStore.WithLabelValues(appmetrics.ResultFromErr(err)).Inc()
+		if err != nil {
 			return apiError{Status: http.StatusInternalServerError, Message: "Failed to store signed PDF"}
 		}
 		signedStored = true
@@ -595,7 +637,7 @@ func signDocument(ctx context.Context, req SignRequest) (string, string, int, er
 			SignerSubject: extractCertificateSubject(certPEM, session.Email),
 			SignedAt:      now,
 		}
-		if err := tx.Clauses(clause.OnConflict{
+		err = tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "signed_s3_key"}},
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"token":          signedDoc.Token,
@@ -604,7 +646,9 @@ func signDocument(ctx context.Context, req SignRequest) (string, string, int, er
 				"signer_subject": signedDoc.SignerSubject,
 				"signed_at":      signedDoc.SignedAt,
 			}),
-		}).Create(&signedDoc).Error; err != nil {
+		}).Create(&signedDoc).Error
+		appmetrics.SignedDocumentRegistry.WithLabelValues(appmetrics.ResultFromErr(err)).Inc()
+		if err != nil {
 			return err
 		}
 
@@ -644,10 +688,14 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		var apiErr apiError
 		if errors.As(err, &apiErr) {
-			writeVerificationJSON(w, apiErr.Status, verificationError("error", apiErr.Message))
+			result := verificationError("error", apiErr.Message)
+			recordVerifyRequest("unknown", result)
+			writeVerificationJSON(w, apiErr.Status, result)
 			return
 		}
-		writeVerificationJSON(w, http.StatusBadRequest, verificationError("error", "bad json"))
+		result := verificationError("error", "bad json")
+		recordVerifyRequest("unknown", result)
+		writeVerificationJSON(w, http.StatusBadRequest, result)
 		return
 	}
 
@@ -657,34 +705,53 @@ func handleVerifyRequest(w http.ResponseWriter, r *http.Request) {
 	case strings.TrimSpace(req.UploadToken) != "":
 		handleVerifyByUploadToken(w, r, req.UploadToken)
 	default:
-		writeVerificationJSON(w, http.StatusBadRequest, verificationError("error", "token or upload_token is required"))
+		result := verificationError("error", "token or upload_token is required")
+		recordVerifyRequest("unknown", result)
+		writeVerificationJSON(w, http.StatusBadRequest, result)
 	}
 }
 
 func handleVerifyByToken(w http.ResponseWriter, r *http.Request, token string) {
-	if _, err := redisDB.Get(r.Context(), "doc:"+token).Result(); err != nil {
+	depStart := time.Now()
+	_, err := redisDB.Get(r.Context(), "doc:"+token).Result()
+	appmetrics.ObserveDependency("signer", "redis", "redis_get", depStart, err)
+	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			writeVerificationJSON(w, http.StatusNotFound, verificationError("error", "token not found or expired"))
+			result := verificationError("error", "token not found or expired")
+			recordVerifyRequest("token", result)
+			writeVerificationJSON(w, http.StatusNotFound, result)
 			return
 		}
-		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "token lookup failed"))
+		result := verificationError("error", "token lookup failed")
+		recordVerifyRequest("token", result)
+		writeVerificationJSON(w, http.StatusInternalServerError, result)
 		return
 	}
 
 	var session SigningSession
+	depStart = time.Now()
 	dbResult := db.WithContext(r.Context()).First(&session, "token = ?", token)
+	appmetrics.ObserveDependency("signer", "postgres", "signing_session_lookup", depStart, dbResult.Error)
 	if errors.Is(dbResult.Error, gorm.ErrRecordNotFound) || session.SignedS3Key == "" {
-		writeVerificationJSON(w, http.StatusNotFound, verificationError("error", "signed document not found"))
+		result := verificationError("error", "signed document not found")
+		recordVerifyRequest("token", result)
+		writeVerificationJSON(w, http.StatusNotFound, result)
 		return
 	}
 	if dbResult.Error != nil {
-		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "database lookup failed"))
+		result := verificationError("error", "database lookup failed")
+		recordVerifyRequest("token", result)
+		writeVerificationJSON(w, http.StatusInternalServerError, result)
 		return
 	}
 
+	depStart = time.Now()
 	pdfBytes, err := getObjectBytes(r.Context(), s3Client, appCfg.MinioBucket, session.SignedS3Key)
+	appmetrics.ObserveDependency("signer", "minio", "s3_get", depStart, err)
 	if err != nil {
-		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "failed to load signed PDF"))
+		result := verificationError("error", "failed to load signed PDF")
+		recordVerifyRequest("token", result)
+		writeVerificationJSON(w, http.StatusInternalServerError, result)
 		return
 	}
 
@@ -692,10 +759,13 @@ func handleVerifyByToken(w http.ResponseWriter, r *http.Request, token string) {
 	statusCode, verification, err := verifyStoredServicePDF(r.Context(), pdfBytes, token, session.SignedS3Key)
 	if err != nil {
 		log.Printf("pdf verification error: %v", err)
-		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "verification service failed"))
+		result := verificationError("error", "verification service failed")
+		recordVerifyRequest("token", result)
+		writeVerificationJSON(w, http.StatusInternalServerError, result)
 		return
 	}
 
+	recordVerifyRequest("token", verification)
 	writeVerificationJSON(w, statusCode, verification)
 }
 
@@ -703,27 +773,39 @@ func handleVerifyByUploadToken(w http.ResponseWriter, r *http.Request, uploadTok
 	waitCtx, cancel := context.WithTimeout(r.Context(), appCfg.DependencyTimeout)
 	defer cancel()
 
+	waitStart := time.Now()
 	val, err := waitForVerifyUpload(waitCtx, uploadToken)
+	appmetrics.VerifyUploadWaitDuration.WithLabelValues(appmetrics.ResultFromErr(err)).Observe(time.Since(waitStart).Seconds())
 	if err != nil {
-		writeVerificationJSON(w, http.StatusNotFound, verificationError("error", "upload token not found or expired"))
+		result := verificationError("error", "upload token not found or expired")
+		recordVerifyRequest("upload", result)
+		writeVerificationJSON(w, http.StatusNotFound, result)
 		return
 	}
 
 	var meta FileMeta
 	if err := json.Unmarshal([]byte(val), &meta); err != nil {
-		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "invalid upload metadata"))
+		result := verificationError("error", "invalid upload metadata")
+		recordVerifyRequest("upload", result)
+		writeVerificationJSON(w, http.StatusInternalServerError, result)
 		return
 	}
 	if strings.TrimSpace(meta.S3Key) == "" {
-		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "invalid upload metadata"))
+		result := verificationError("error", "invalid upload metadata")
+		recordVerifyRequest("upload", result)
+		writeVerificationJSON(w, http.StatusInternalServerError, result)
 		return
 	}
 
 	defer cleanupVerifyUpload(uploadToken, meta.S3Key)
 
+	depStart := time.Now()
 	pdfBytes, err := getObjectBytes(r.Context(), s3Client, appCfg.MinioBucket, meta.S3Key)
+	appmetrics.ObserveDependency("signer", "minio", "s3_get", depStart, err)
 	if err != nil {
-		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "failed to load uploaded PDF"))
+		result := verificationError("error", "failed to load uploaded PDF")
+		recordVerifyRequest("upload", result)
+		writeVerificationJSON(w, http.StatusInternalServerError, result)
 		return
 	}
 
@@ -731,10 +813,13 @@ func handleVerifyByUploadToken(w http.ResponseWriter, r *http.Request, uploadTok
 	statusCode, verification, err := verifyServiceOwnedPDF(r.Context(), pdfBytes)
 	if err != nil {
 		log.Printf("pdf verification error: %v", err)
-		writeVerificationJSON(w, http.StatusInternalServerError, verificationError("error", "verification service failed"))
+		result := verificationError("error", "verification service failed")
+		recordVerifyRequest("upload", result)
+		writeVerificationJSON(w, http.StatusInternalServerError, result)
 		return
 	}
 
+	recordVerifyRequest("upload", verification)
 	writeVerificationJSON(w, statusCode, verification)
 }
 
@@ -743,7 +828,9 @@ func waitForVerifyUpload(ctx context.Context, uploadToken string) (string, error
 
 	var lastErr error
 	for {
+		depStart := time.Now()
 		val, err := redisDB.Get(ctx, "verify:"+uploadToken).Result()
+		appmetrics.ObserveDependency("signer", "redis", "redis_get", depStart, err)
 		if err == nil {
 			return val, nil
 		}
@@ -813,7 +900,15 @@ func generateSelfSignedCertPEM(email string, priv *rsa.PrivateKey) ([]byte, []by
 	return certPEM, keyPEM, nil
 }
 
-func signPDFViaService(ctx context.Context, pdfSignURL string, pdfBytes, certPEM, keyPEM []byte, documentID string) ([]byte, error) {
+func signPDFViaService(ctx context.Context, pdfSignURL string, pdfBytes, certPEM, keyPEM []byte, documentID string) (signedPDF []byte, retErr error) {
+	start := time.Now()
+	defer func() {
+		result := appmetrics.ResultFromErr(retErr)
+		appmetrics.PDFSignerRequests.WithLabelValues("sign", result).Inc()
+		appmetrics.PDFSignerRequestDuration.WithLabelValues("sign", result).Observe(time.Since(start).Seconds())
+		appmetrics.ObserveDependency("signer", "pdfsigner", "sign", start, retErr)
+	}()
+
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
@@ -859,10 +954,19 @@ func signPDFViaService(ctx context.Context, pdfSignURL string, pdfBytes, certPEM
 		return nil, fmt.Errorf("pdfsigner error: %s %s", resp.Status, string(b))
 	}
 
-	return io.ReadAll(resp.Body)
+	signedPDF, retErr = io.ReadAll(resp.Body)
+	return signedPDF, retErr
 }
 
-func verifyPDFViaService(ctx context.Context, pdfVerifyURL string, pdfBytes []byte) (int, []byte, error) {
+func verifyPDFViaService(ctx context.Context, pdfVerifyURL string, pdfBytes []byte) (statusCode int, body []byte, retErr error) {
+	start := time.Now()
+	defer func() {
+		result := appmetrics.ResultFromErr(retErr)
+		appmetrics.PDFSignerRequests.WithLabelValues("verify", result).Inc()
+		appmetrics.PDFSignerRequestDuration.WithLabelValues("verify", result).Observe(time.Since(start).Seconds())
+		appmetrics.ObserveDependency("signer", "pdfsigner", "verify", start, retErr)
+	}()
+
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
@@ -893,7 +997,7 @@ func verifyPDFViaService(ctx context.Context, pdfVerifyURL string, pdfBytes []by
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -905,7 +1009,9 @@ func verifyServiceOwnedPDF(ctx context.Context, pdfBytes []byte) (int, Verificat
 	log.Printf("verify uploaded pdf: documentHash=%s", documentHash)
 
 	var signedDoc SignedDocument
+	depStart := time.Now()
 	result := db.WithContext(ctx).First(&signedDoc, "signed_pdfsha = ?", documentHash)
+	appmetrics.ObserveDependency("signer", "postgres", "signed_document_lookup", depStart, result.Error)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			log.Printf("verify uploaded pdf: no signed_documents match for hash=%s", documentHash)
@@ -1033,6 +1139,38 @@ func verificationError(status, message string) VerificationResult {
 	}
 }
 
+func recordVerifyRequest(mode string, result VerificationResult) {
+	if mode == "" {
+		mode = "unknown"
+	}
+	appmetrics.VerifyRequests.WithLabelValues(mode, result.Status, fmt.Sprintf("%t", result.ServiceOwned)).Inc()
+}
+
+func signResult(statusCode int, err error) string {
+	if err == nil {
+		return "success"
+	}
+	var apiErr apiError
+	if errors.As(err, &apiErr) {
+		statusCode = apiErr.Status
+	}
+	switch statusCode {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusUnauthorized:
+		return "invalid_code"
+	case http.StatusForbidden:
+		if strings.Contains(strings.ToLower(err.Error()), "already signed") {
+			return "already_signed"
+		}
+		return "too_many_attempts"
+	default:
+		return "error"
+	}
+}
+
 func writeVerificationJSON(w http.ResponseWriter, statusCode int, result VerificationResult) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -1095,22 +1233,33 @@ func cleanupVerifyUpload(uploadToken, objectKey string) {
 	if err := deleteVerifyArtifacts(ctx, s3Client, appCfg.MinioBucket, objectKey); err != nil {
 		log.Printf("Verify upload delete failed for %s: %v", objectKey, err)
 	}
-	if err := redisDB.Del(ctx, "verify:"+uploadToken).Err(); err != nil {
+	depStart := time.Now()
+	err := redisDB.Del(ctx, "verify:"+uploadToken).Err()
+	appmetrics.ObserveDependency("signer", "redis", "redis_del", depStart, err)
+	if err != nil {
 		log.Printf("Verify upload redis delete failed for %s: %v", logutil.MaskToken(uploadToken), err)
 	}
-	if err := redisDB.ZRem(ctx, verifyCleanupZSetKey, objectKey).Err(); err != nil {
+	depStart = time.Now()
+	err = redisDB.ZRem(ctx, verifyCleanupZSetKey, objectKey).Err()
+	appmetrics.ObserveDependency("signer", "redis", "redis_zrem", depStart, err)
+	if err != nil {
 		log.Printf("Verify upload cleanup zset remove failed for %s: %v", objectKey, err)
 	}
 }
 
 func deleteVerifyArtifacts(ctx context.Context, s3c *s3.Client, bucket, objectKey string) error {
 	if err := infra.DeleteObject(ctx, s3c, bucket, objectKey); err != nil {
+		appmetrics.VerifyCleanup.WithLabelValues("object", "error").Inc()
 		return err
 	}
+	appmetrics.VerifyCleanup.WithLabelValues("object", "success").Inc()
 
 	infoKey := objectKey + ".info"
 	if err := infra.DeleteObject(ctx, s3c, bucket, infoKey); err != nil {
+		appmetrics.VerifyCleanup.WithLabelValues("info", "error").Inc()
 		log.Printf("Verify upload .info delete skipped for %s: %v", infoKey, err)
+	} else {
+		appmetrics.VerifyCleanup.WithLabelValues("info", "success").Inc()
 	}
 
 	return nil

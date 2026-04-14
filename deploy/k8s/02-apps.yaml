@@ -18,10 +18,11 @@ spec:
         emptyDir: {}
       containers:
       - name: uploader
-        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-14-1
+        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-15-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
+        - containerPort: 9100
         volumeMounts:
         - name: uploader-tmp
           mountPath: /tmp
@@ -42,6 +43,8 @@ spec:
           valueFrom: {secretKeyRef: {name: signer-secrets, key: RABBIT_URL}}
         - name: HTTP_PORT
           value: "8080"
+        - name: METRICS_PORT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: METRICS_PORT}}
         - name: HTTP_READ_HEADER_TIMEOUT
           valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_HEADER_TIMEOUT}}
         - name: HTTP_READ_TIMEOUT
@@ -88,6 +91,10 @@ spec:
   ports:
   - port: 80
     targetPort: 8080
+    name: http
+  - port: 9100
+    targetPort: 9100
+    name: metrics
   selector:
     app: uploader
 ---
@@ -108,10 +115,11 @@ spec:
     spec:
       containers:
       - name: downloader
-        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-14-1
+        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-15-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8081
+        - containerPort: 9100
         env:
         - name: MINIO_ENDPOINT
           valueFrom: {configMapKeyRef: {name: signer-config, key: MINIO_ENDPOINT}}
@@ -127,6 +135,8 @@ spec:
           valueFrom: {configMapKeyRef: {name: signer-config, key: REDIS_ADDR}}
         - name: HTTP_PORT
           value: "8081"
+        - name: METRICS_PORT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: METRICS_PORT}}
         - name: DB_DSN
           valueFrom: {secretKeyRef: {name: signer-secrets, key: DB_DSN}}
         - name: HTTP_READ_HEADER_TIMEOUT
@@ -171,6 +181,10 @@ spec:
   ports:
   - port: 80
     targetPort: 8081
+    name: http
+  - port: 9100
+    targetPort: 9100
+    name: metrics
   selector:
     app: downloader
 ---
@@ -191,13 +205,16 @@ spec:
     spec:
       containers:
       - name: mailer
-        image: ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-14-1
+        image: ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-15-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8083
+        - containerPort: 9100
         env:
         - name: HTTP_PORT
           value: "8083"
+        - name: METRICS_PORT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: METRICS_PORT}}
         - name: MAILER_TRANSPORT
           valueFrom: {configMapKeyRef: {name: signer-config, key: MAILER_TRANSPORT}}
         - name: MAILER_LOG_BODY
@@ -269,6 +286,10 @@ spec:
   ports:
   - port: 8083
     targetPort: 8083
+    name: http
+  - port: 9100
+    targetPort: 9100
+    name: metrics
   selector:
     app: mailer
 ---
@@ -289,13 +310,16 @@ spec:
     spec:
       containers:
       - name: signer
-        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-14-1
+        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-15-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8082
+        - containerPort: 9100
         env:
         - name: HTTP_PORT
           value: "8082"
+        - name: METRICS_PORT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: METRICS_PORT}}
         - name: DB_DSN
           valueFrom: {secretKeyRef: {name: signer-secrets, key: DB_DSN}}
         - name: RABBIT_URL
@@ -368,6 +392,10 @@ spec:
   ports:
   - port: 80
     targetPort: 8082
+    name: http
+  - port: 9100
+    targetPort: 9100
+    name: metrics
   selector:
     app: signer
 ---
@@ -388,10 +416,11 @@ spec:
     spec:
       containers:
       - name: pdfsigner
-        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-14-1
+        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-15-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8090
+        - containerPort: 8091
         env:
         - name: PDFSIGNER_MAX_FILE_SIZE
           valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGNER_MAX_FILE_SIZE}}
@@ -399,6 +428,8 @@ spec:
           valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGNER_MAX_REQUEST_SIZE}}
         - name: PDFSIGNER_MAX_HEADER_SIZE
           valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGNER_MAX_HEADER_SIZE}}
+        - name: PDFSIGNER_MANAGEMENT_PORT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: PDFSIGNER_MANAGEMENT_PORT}}
         readinessProbe:
           httpGet: {path: /health, port: 8090}
           initialDelaySeconds: 5
@@ -427,3 +458,6 @@ spec:
   - name: http
     port: 8090
     targetPort: 8090
+  - name: metrics
+    port: 8091
+    targetPort: 8091

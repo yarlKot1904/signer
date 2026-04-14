@@ -1,0 +1,76 @@
+groups:
+  - name: signer-application
+    rules:
+      - alert: SignerAPISignHigh5xxRate
+        expr: |
+          sum(rate(signer_http_requests_total{service="signer",route="/api/sign",status_class="5xx"}[10m]))
+          /
+          clamp_min(sum(rate(signer_http_requests_total{service="signer",route="/api/sign"}[10m])), 1)
+          > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "POST /api/sign 5xx rate is above 1%"
+
+      - alert: SignerSignP95Slow
+        expr: |
+          histogram_quantile(0.95, sum(rate(signer_sign_duration_seconds_bucket[10m])) by (le))
+          > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 signing duration is above 30 seconds"
+
+      - alert: MailerSendFailures
+        expr: increase(signer_mailer_send_requests_total{result!="success"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mailer send failures are increasing"
+
+      - alert: MailerSMTPAuthFailures
+        expr: increase(signer_mailer_smtp_auth_total{result!="success"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SMTP authentication failures are increasing"
+
+      - alert: RabbitMQSignerTasksBacklog
+        expr: rabbitmq_queue_messages_ready{queue="signer.tasks"} > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RabbitMQ signer.tasks backlog is above 100"
+
+      - alert: VerifyCleanupFailures
+        expr: |
+          increase(signer_verify_cleanup_total{result!="success"}[10m])
+          +
+          increase(signer_verify_upload_cleanup_total{result!="success"}[10m])
+          > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Verify object cleanup failures are increasing"
+
+      - alert: SignedLookupMissing
+        expr: increase(signer_signed_lookup_missing_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Signed-mode downloader lookup is missing signed_s3_key"
+
+      - alert: PdfSignerVerifyErrors
+        expr: increase(signer_pdfsigner_verify_requests_total{status="error"}[10m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pdfsigner verification errors are increasing"

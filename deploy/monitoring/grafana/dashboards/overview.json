@@ -1,0 +1,52 @@
+{
+  "uid": "signer-overview",
+  "title": "Signer Overview",
+  "tags": ["signer"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "HTTP Requests",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(signer_http_requests_total[5m])) by (service, status_class)"}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "HTTP p95 Latency",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(signer_http_request_duration_seconds_bucket[5m])) by (le, service, route))"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Dependency p95 Latency",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(signer_dependency_request_duration_seconds_bucket[5m])) by (le, service, dependency, operation))"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Scrape Targets Up",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(up)"}
+      ]
+    }
+  ]
+}

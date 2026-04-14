@@ -1,0 +1,53 @@
+{
+  "uid": "signer-verification-flow",
+  "title": "Signer Verification Flow",
+  "tags": ["signer"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Verification Requests",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(signer_verify_requests_total[5m])) by (mode, status, service_owned)"}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Verify Upload Wait p95",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(signer_verify_upload_wait_duration_seconds_bucket[5m])) by (le, result))"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "pdfsigner Verify Status",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(signer_pdfsigner_verify_requests_total[5m])) by (status)"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Verify Cleanup Failures",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(signer_verify_cleanup_total{result!=\"success\"}[5m])) by (target, result)"},
+        {"refId": "B", "expr": "sum(rate(signer_verify_upload_cleanup_total{result!=\"success\"}[5m])) by (target, result)"}
+      ]
+    }
+  ]
+}

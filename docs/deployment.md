@@ -9,17 +9,17 @@ Images referenced in Kubernetes manifests use GHCR.
 
 For ArgoCD and Kubernetes, prefer immutable tags such as a release git tag or `sha-<commit>`:
 
-- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-14-1`
-- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-14-1`
-- `ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-14-1`
-- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-14-1`
-- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-14-1`
+- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-15-1`
+- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-15-1`
+- `ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-15-1`
+- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-15-1`
+- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-15-1`
 
 The GitHub Actions workflow publishes:
 
 - `latest` on pushes to `main`
 - `sha-<12-char-commit>` on every workflow run
-- the git tag name itself on tag pushes such as `deploy-2026-04-14-1`
+- the git tag name itself on tag pushes such as `deploy-2026-04-15-1`
 
 ## Docker Compose
 
@@ -43,12 +43,18 @@ Compose services:
 - `postgres`
 - `rabbitmq`
 - `pdfsigner`
+- `redis-exporter`
+- `postgres-exporter`
+- `prometheus`
+- `grafana`
 
 Ports:
 
 - `80`: public entry through Nginx
 - `9001`: MinIO console
 - `15672`: RabbitMQ management UI
+- `9090`: Prometheus
+- `3000`: Grafana
 
 Compose-specific notes:
 
@@ -56,6 +62,8 @@ Compose-specific notes:
 - `minio-init` creates the `docs-storage` bucket
 - secrets and connection strings are read from `.env`
 - internal service ports are not published to the host by default
+- application `/metrics` endpoints stay on internal port `9100`
+- `pdfsigner` Prometheus metrics are exposed internally on `8091`
 
 ## Kubernetes
 
@@ -66,6 +74,7 @@ Kubernetes manifests live under `deploy/k8s/`:
 - `02-apps.yaml`
 - `03-ingress.yaml`
 - `04-networkpolicy.yaml`
+- `05-monitoring.yaml`
 
 ### Infra components
 
@@ -83,11 +92,19 @@ Kubernetes manifests live under `deploy/k8s/`:
 - `signer`
 - `pdfsigner`
 
+### Monitoring components
+
+- Prometheus
+- Grafana
+- Redis exporter
+- PostgreSQL exporter
+
 ### Ingress
 
 Ingress host:
 
 - `signer.local`
+- `grafana.signer.local`
 
 Path routing:
 
@@ -95,6 +112,8 @@ Path routing:
 - `/download` -> `downloader-svc`
 - `/view` -> `downloader-svc`
 - `/api/` -> `signer-svc`
+
+Grafana is exposed at `grafana.signer.local`. Prometheus stays internal as a ClusterIP service.
 
 ## Environment Variables
 
@@ -107,6 +126,7 @@ Path routing:
 - `MINIO_REGION`
 - `REDIS_ADDR`
 - `HTTP_PORT`
+- `METRICS_PORT`
 - `RABBIT_URL`
 - `DB_DSN`
 - `PDFSIGN_URL`
@@ -131,6 +151,9 @@ Path routing:
 - `PDFSIGN_TIMEOUT`
 - `UPLOAD_MAX_BYTES`
 - `JSON_MAX_BYTES`
+- `POSTGRES_EXPORTER_DSN`
+- `GRAFANA_ADMIN_USER`
+- `GRAFANA_ADMIN_PASSWORD`
 
 ### Service usage
 
@@ -142,6 +165,7 @@ Path routing:
 - `MINIO_BUCKET`
 - `REDIS_ADDR`
 - `HTTP_PORT`
+- `METRICS_PORT`
 - `RABBIT_URL`
 
 `downloader`:
@@ -153,6 +177,7 @@ Path routing:
 - `MINIO_REGION`
 - `REDIS_ADDR`
 - `HTTP_PORT`
+- `METRICS_PORT`
 - `DB_DSN`
 
 `signer`:
@@ -164,6 +189,7 @@ Path routing:
 - `MINIO_REGION`
 - `REDIS_ADDR`
 - `HTTP_PORT`
+- `METRICS_PORT`
 - `DB_DSN`
 - `RABBIT_URL`
 - `PDFSIGN_URL`
@@ -174,6 +200,7 @@ Path routing:
 `mailer`:
 
 - `HTTP_PORT`
+- `METRICS_PORT`
 - `MAILER_TRANSPORT`
 - `MAILER_LOG_BODY`
 - `SMTP_HOST`
@@ -220,6 +247,7 @@ For Mail.ru, use a password for an external application, not the normal mailbox 
 - `PDFSIGNER_MAX_FILE_SIZE`
 - `PDFSIGNER_MAX_REQUEST_SIZE`
 - `PDFSIGNER_MAX_HEADER_SIZE`
+- `PDFSIGNER_MANAGEMENT_PORT`
 
 ### Infra bootstrap variables
 
@@ -245,6 +273,8 @@ Docker volumes:
 
 - `minio_data`
 - `postgres_data`
+- `prometheus_data`
+- `grafana_data`
 
 Kubernetes persistent volume claims:
 

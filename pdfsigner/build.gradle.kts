@@ -23,6 +23,8 @@ repositories {
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
 
     implementation("org.apache.pdfbox:pdfbox:2.0.31")
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")

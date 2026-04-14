@@ -1,0 +1,73 @@
+{
+  "uid": "signer-signing-flow",
+  "title": "Signer Signing Flow",
+  "tags": ["signer"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Upload Outcomes",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(signer_upload_completed_total[5m])) by (result)"}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "RabbitMQ signer.tasks Backlog",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "rabbitmq_queue_messages_ready{queue=\"signer.tasks\"} + rabbitmq_queue_messages_unacked{queue=\"signer.tasks\"}"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Sign Requests",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(signer_sign_requests_total[5m])) by (result)"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Signing p95 Latency",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(signer_sign_duration_seconds_bucket[5m])) by (le, result))"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "pdfsigner p95 Latency",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(signer_pdfsigner_request_duration_seconds_bucket[5m])) by (le, operation, result))"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Signed Store And Registry",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(signer_signed_pdf_store_total[5m])) by (result)"},
+        {"refId": "B", "expr": "sum(rate(signer_signed_document_registry_total[5m])) by (result)"}
+      ]
+    }
+  ]
+}

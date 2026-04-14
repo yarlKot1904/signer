@@ -15,7 +15,7 @@ Use these labels consistently where they apply:
 - `result`: `success`, `error`, `timeout`, `not_found`, `invalid`, or a service-specific bounded value
 - `operation`: bounded dependency operation such as `redis_get`, `s3_put`, `pdfsign`, `smtp_send`
 - `template`: mail template name, currently `signing-otp` or `signed-document`
-- `mode`: verification mode, currently `token` or `upload`
+- `mode`: verification mode, currently `token`, `upload`, or `unknown` for malformed requests before mode selection
 
 ## HTTP Metrics
 
@@ -71,6 +71,13 @@ These should exist on every HTTP service.
 | `signer_mailer_smtp_connect_duration_seconds` | Histogram | `tls_mode`, `result` | SMTP connectivity and TLS negotiation health. |
 | `signer_mailer_smtp_auth_total` | Counter | `result` | SMTP authentication failures without exposing usernames. |
 | `signer_mailer_log_body_enabled` | Gauge | none | `1` when prototype body logging is enabled, otherwise `0`. |
+| `signer_mailer_render_duration_seconds` | Histogram | `template`, `result` | Template render latency before transport dispatch. |
+| `signer_mailer_message_bytes` | Histogram | `template`, `transport` | Rendered message size without logging body content. |
+| `signer_mailer_smtp_stage_total` | Counter | `stage`, `tls_mode`, `result` | SMTP stage outcomes for `dial`, `starttls`, `auth`, `mail_from`, `rcpt_to`, `data`, and `quit`. |
+| `signer_mailer_smtp_stage_duration_seconds` | Histogram | `stage`, `tls_mode`, `result` | SMTP stage latency. |
+| `signer_mailer_transport_info` | Gauge | `transport`, `tls_mode` | Current mailer transport configuration. |
+| `signer_mailer_invalid_recipient_total` | Counter | `template` | Invalid recipient/from address parsing without exposing addresses. |
+| `signer_mailer_notification_age_seconds` | Histogram | `template`, `result` | Age of a notification at dispatch time when event creation time is available. |
 
 ## Downloader
 

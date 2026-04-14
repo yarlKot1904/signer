@@ -27,6 +27,9 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder
 import org.bouncycastle.util.Selector
 import org.bouncycastle.util.Store
+import io.micrometer.core.instrument.DistributionSummary
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.io.ByteArrayInputStream
@@ -38,8 +41,10 @@ import java.security.PrivateKey
 import java.security.Security
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.time.Duration
 import java.time.Instant
 import java.util.Calendar
+import java.util.concurrent.TimeUnit
 
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
 data class VerificationResult(
@@ -65,8 +70,24 @@ data class VerificationResult(
 }
 
 @Service
-class PdfSigningService {
+class PdfSigningService(
+    private val registry: MeterRegistry
+) {
     private val logger = LoggerFactory.getLogger(PdfSigningService::class.java)
+    private val timerObjectives = arrayOf(
+        Duration.ofMillis(50),
+        Duration.ofMillis(100),
+        Duration.ofMillis(250),
+        Duration.ofMillis(500),
+        Duration.ofSeconds(1),
+        Duration.ofSeconds(2),
+        Duration.ofSeconds(5),
+        Duration.ofSeconds(10),
+        Duration.ofSeconds(30),
+        Duration.ofSeconds(60),
+        Duration.ofSeconds(120)
+    )
+    private val pageObjectives = doubleArrayOf(1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0)
 
     init {
         if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
@@ -75,58 +96,82 @@ class PdfSigningService {
     }
 
     fun signPdf(pdfBytes: ByteArray, certPem: String, keyPem: String, documentId: String): ByteArray {
-        val cert = parseX509FromPem(certPem)
-        val key = parsePrivateKeyFromPem(keyPem)
+        val started = System.nanoTime()
+        var result = "error"
+        try {
+            val cert = parseX509FromPem(certPem)
+            val key = parsePrivateKeyFromPem(keyPem)
 
-        PDDocument.load(ByteArrayInputStream(pdfBytes)).use { doc ->
-            require(doc.numberOfPages > 0) { "PDF has no pages" }
-            logger.info(
-                "Starting PDF signing: pages={}, subject={}",
-                doc.numberOfPages,
-                cert.subjectX500Principal.name
-            )
-
-            stampLastPage(doc, cert, documentId)
-            val stampedOut = ByteArrayOutputStream()
-            doc.save(stampedOut)
-            val stampedPdf = stampedOut.toByteArray()
-            logger.info("Stamped PDF prepared before signing: bytes={}", stampedPdf.size)
-
-            PDDocument.load(ByteArrayInputStream(stampedPdf)).use { stampedDoc ->
-                val extractedText = PDFTextStripper().apply {
-                    startPage = stampedDoc.numberOfPages
-                    endPage = stampedDoc.numberOfPages
-                }.getText(stampedDoc)
+            PDDocument.load(ByteArrayInputStream(pdfBytes)).use { doc ->
+                require(doc.numberOfPages > 0) { "PDF has no pages" }
+                recordPdfPages("sign", doc.numberOfPages)
                 logger.info(
-                    "Stamped PDF text probe: lastPageContainsTitle={}, lastPageContainsEmail={}",
-                    extractedText.contains("Документ подписан электронной подписью"),
-                        extractedText.contains(emailForLog(cert))
+                    "Starting PDF signing: pages={}, subject={}",
+                    doc.numberOfPages,
+                    cert.subjectX500Principal.name
                 )
 
-                val signature = PDSignature().apply {
-                    setFilter(PDSignature.FILTER_ADOBE_PPKLITE)
-                    setSubFilter(PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED)
-                    setName(cert.subjectX500Principal.name)
-                    setReason("Document signed")
-                    setLocation("CryptoSigner")
-                    setSignDate(Calendar.getInstance())
+                val stampStarted = System.nanoTime()
+                try {
+                    stampLastPage(doc, cert, documentId)
+                    recordTimer("signer_pdfsigner_stamp_duration_seconds", "success", stampStarted)
+                } catch (e: Exception) {
+                    recordTimer("signer_pdfsigner_stamp_duration_seconds", "error", stampStarted)
+                    throw e
                 }
 
-                val signer = CmsSigner(key, cert)
-                val out = ByteArrayOutputStream()
-                SignatureOptions().use { opts ->
-                    opts.preferredSignatureSize = 200_000
-                    stampedDoc.addSignature(signature, signer, opts)
-                    stampedDoc.saveIncremental(out)
-                }
+                val stampedOut = ByteArrayOutputStream()
+                doc.save(stampedOut)
+                val stampedPdf = stampedOut.toByteArray()
+                logger.info("Stamped PDF prepared before signing: bytes={}", stampedPdf.size)
 
-                logger.info(
-                    "Finished PDF signing: pages={}, outputBytes={}",
-                    stampedDoc.numberOfPages,
-                    out.size()
-                )
-                return out.toByteArray()
+                PDDocument.load(ByteArrayInputStream(stampedPdf)).use { stampedDoc ->
+                    val extractedText = PDFTextStripper().apply {
+                        startPage = stampedDoc.numberOfPages
+                        endPage = stampedDoc.numberOfPages
+                    }.getText(stampedDoc)
+                    logger.info(
+                        "Stamped PDF text probe: lastPageContainsTitle={}, lastPageContainsEmail={}",
+                        extractedText.contains("Документ подписан электронной подписью"),
+                            extractedText.contains(emailForLog(cert))
+                    )
+
+                    val signature = PDSignature().apply {
+                        setFilter(PDSignature.FILTER_ADOBE_PPKLITE)
+                        setSubFilter(PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED)
+                        setName(cert.subjectX500Principal.name)
+                        setReason("Document signed")
+                        setLocation("CryptoSigner")
+                        setSignDate(Calendar.getInstance())
+                    }
+
+                    val signer = CmsSigner(key, cert)
+                    val out = ByteArrayOutputStream()
+                    val signatureStarted = System.nanoTime()
+                    try {
+                        SignatureOptions().use { opts ->
+                            opts.preferredSignatureSize = 200_000
+                            stampedDoc.addSignature(signature, signer, opts)
+                            stampedDoc.saveIncremental(out)
+                        }
+                        recordTimer("signer_pdfsigner_signature_duration_seconds", "success", signatureStarted)
+                    } catch (e: Exception) {
+                        recordTimer("signer_pdfsigner_signature_duration_seconds", "error", signatureStarted)
+                        throw e
+                    }
+
+                    logger.info(
+                        "Finished PDF signing: pages={}, outputBytes={}",
+                        stampedDoc.numberOfPages,
+                        out.size()
+                    )
+                    result = "success"
+                    return out.toByteArray()
+                }
             }
+        } finally {
+            registry.counter("signer_pdfsigner_sign_requests_total", "result", result).increment()
+            recordTimer("signer_pdfsigner_sign_duration_seconds", result, started)
         }
     }
 
@@ -134,66 +179,90 @@ class PdfSigningService {
         pdfBytes.size >= 5 && pdfBytes.copyOfRange(0, 5).contentEquals("%PDF-".toByteArray())
 
     fun verifyPdf(pdfBytes: ByteArray): VerificationResult {
-        PDDocument.load(ByteArrayInputStream(pdfBytes)).use { doc ->
-            val signatures = doc.signatureDictionaries
-            logger.info("Verifying PDF: pages={}, signatures={}", doc.numberOfPages, signatures.size)
-            if (signatures.isEmpty()) {
-                return VerificationResult(
-                    status = "unsigned",
-                    signaturePresent = false,
-                    integrityValid = false
-                )
-            }
+        val started = System.nanoTime()
+        var status = "error"
+        try {
+            PDDocument.load(ByteArrayInputStream(pdfBytes)).use { doc ->
+                recordPdfPages("verify", doc.numberOfPages)
+                val signatures = doc.signatureDictionaries
+                logger.info("Verifying PDF: pages={}, signatures={}", doc.numberOfPages, signatures.size)
+                if (signatures.isEmpty()) {
+                    val verification = VerificationResult(
+                        status = "unsigned",
+                        signaturePresent = false,
+                        integrityValid = false
+                    )
+                    status = verification.status
+                    return verification
+                }
 
-            val signature = signatures.first()
-            val contents = signature.getContents(pdfBytes)
-            val signedContent = signature.getSignedContent(pdfBytes)
-            val cms = try {
-                CMSSignedData(CMSProcessableByteArray(signedContent), contents)
-            } catch (e: CMSException) {
-                logger.warn("Failed to parse CMS signature payload", e)
-                return invalidSignature(signature, "Malformed CMS signature content")
-            } catch (e: IllegalArgumentException) {
-                logger.warn("Failed to decode CMS signature payload", e)
-                return invalidSignature(signature, "Malformed CMS signature content")
-            }
-            val signerInfo = cms.signerInfos.signers.firstOrNull()
-                ?: return invalidSignature(signature, "No signer info present")
+                val signature = signatures.first()
+                val contents = signature.getContents(pdfBytes)
+                val signedContent = signature.getSignedContent(pdfBytes)
+                val cms = try {
+                    CMSSignedData(CMSProcessableByteArray(signedContent), contents)
+                } catch (e: CMSException) {
+                    logger.warn("Failed to parse CMS signature payload", e)
+                    val verification = invalidSignature(signature, "Malformed CMS signature content")
+                    status = verification.status
+                    return verification
+                } catch (e: IllegalArgumentException) {
+                    logger.warn("Failed to decode CMS signature payload", e)
+                    val verification = invalidSignature(signature, "Malformed CMS signature content")
+                    status = verification.status
+                    return verification
+                }
+                val signerInfo = cms.signerInfos.signers.firstOrNull()
+                if (signerInfo == null) {
+                    val verification = invalidSignature(signature, "No signer info present")
+                    status = verification.status
+                    return verification
+                }
 
-            @Suppress("UNCHECKED_CAST")
-            val matches = cms.certificates.getMatches(signerInfo.sid as Selector<X509CertificateHolder>)
-            val certHolder = matches.firstOrNull() as? X509CertificateHolder
-                ?: return invalidSignature(signature, "Signer certificate not found")
-            val cert = JcaX509CertificateConverter()
-                .setProvider(BouncyCastleProvider.PROVIDER_NAME)
-                .getCertificate(certHolder)
-
-            val integrityValid = signerInfo.verify(
-                JcaSimpleSignerInfoVerifierBuilder()
+                @Suppress("UNCHECKED_CAST")
+                val matches = cms.certificates.getMatches(signerInfo.sid as Selector<X509CertificateHolder>)
+                val certHolder = matches.firstOrNull() as? X509CertificateHolder
+                if (certHolder == null) {
+                    val verification = invalidSignature(signature, "Signer certificate not found")
+                    status = verification.status
+                    return verification
+                }
+                val cert = JcaX509CertificateConverter()
                     .setProvider(BouncyCastleProvider.PROVIDER_NAME)
-                    .build(cert)
-            )
+                    .getCertificate(certHolder)
 
-            val subject = cert.subjectX500Principal.name
-            val certHash = sha256Hex(cert.encoded)
-            logger.info(
-                "Verification result: integrityValid={}, subject={}, certSha256={}",
-                integrityValid,
-                subject,
-                certHash
-            )
-            return VerificationResult(
-                status = if (integrityValid) "verified" else "invalid_signature",
-                signaturePresent = true,
-                integrityValid = integrityValid,
-                signerSubject = subject,
-                signerCn = extractEmailFromSubject(subject) ?: extractCn(subject),
-                signingTime = signature.signDate?.toInstant()?.toString(),
-                certificateSelfSigned = isSelfSigned(cert),
-                certificateSha256 = certHash,
-                certificateTrusted = null,
-                error = if (integrityValid) null else "Signature integrity check failed"
-            )
+                val integrityValid = signerInfo.verify(
+                    JcaSimpleSignerInfoVerifierBuilder()
+                        .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                        .build(cert)
+                )
+
+                val subject = cert.subjectX500Principal.name
+                val certHash = sha256Hex(cert.encoded)
+                logger.info(
+                    "Verification result: integrityValid={}, subject={}, certSha256={}",
+                    integrityValid,
+                    subject,
+                    certHash
+                )
+                val verification = VerificationResult(
+                    status = if (integrityValid) "verified" else "invalid_signature",
+                    signaturePresent = true,
+                    integrityValid = integrityValid,
+                    signerSubject = subject,
+                    signerCn = extractEmailFromSubject(subject) ?: extractCn(subject),
+                    signingTime = signature.signDate?.toInstant()?.toString(),
+                    certificateSelfSigned = isSelfSigned(cert),
+                    certificateSha256 = certHash,
+                    certificateTrusted = null,
+                    error = if (integrityValid) null else "Signature integrity check failed"
+                )
+                status = verification.status
+                return verification
+            }
+        } finally {
+            registry.counter("signer_pdfsigner_verify_requests_total", "status", status).increment()
+            recordTimer("signer_pdfsigner_verify_duration_seconds", status, started)
         }
     }
 
@@ -208,6 +277,23 @@ class PdfSigningService {
 
     private fun emailForLog(cert: X509Certificate): String =
         extractEmailFromSubject(cert.subjectX500Principal.name) ?: cert.subjectX500Principal.name
+
+    private fun recordTimer(name: String, labelValue: String, startedNanos: Long) {
+        val labelName = if (name.contains("_verify_")) "status" else "result"
+        Timer.builder(name)
+            .tag(labelName, labelValue)
+            .serviceLevelObjectives(*timerObjectives)
+            .register(registry)
+            .record(System.nanoTime() - startedNanos, TimeUnit.NANOSECONDS)
+    }
+
+    private fun recordPdfPages(operation: String, pages: Int) {
+        DistributionSummary.builder("signer_pdfsigner_pdf_pages")
+            .tag("operation", operation)
+            .serviceLevelObjectives(*pageObjectives)
+            .register(registry)
+            .record(pages.toDouble())
+    }
 
     private fun stampLastPage(doc: PDDocument, cert: X509Certificate, documentId: String) {
         val page = doc.getPage(doc.numberOfPages - 1)
