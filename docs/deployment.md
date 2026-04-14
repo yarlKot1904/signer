@@ -9,17 +9,17 @@ Images referenced in Kubernetes manifests use GHCR.
 
 For ArgoCD and Kubernetes, prefer immutable tags such as a release git tag or `sha-<commit>`:
 
-- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-6`
-- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-6`
-- `ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-6`
-- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-6`
-- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-6`
+- `ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-14-1`
+- `ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-14-1`
+- `ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-14-1`
+- `ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-14-1`
+- `ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-14-1`
 
 The GitHub Actions workflow publishes:
 
 - `latest` on pushes to `main`
 - `sha-<12-char-commit>` on every workflow run
-- the git tag name itself on tag pushes such as `deploy-2026-04-10-6`
+- the git tag name itself on tag pushes such as `deploy-2026-04-14-1`
 
 ## Docker Compose
 
@@ -113,7 +113,15 @@ Path routing:
 - `MAILER_URL`
 - `PUBLIC_BASE_URL`
 - `MASTER_KEY_HEX`
+- `MAILER_TRANSPORT`
 - `MAILER_LOG_BODY`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
+- `SMTP_TLS_MODE`
+- `SMTP_SERVER_NAME`
 - `HTTP_READ_HEADER_TIMEOUT`
 - `HTTP_READ_TIMEOUT`
 - `HTTP_WRITE_TIMEOUT`
@@ -166,7 +174,46 @@ Path routing:
 `mailer`:
 
 - `HTTP_PORT`
+- `MAILER_TRANSPORT`
 - `MAILER_LOG_BODY`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
+- `SMTP_TLS_MODE`
+- `SMTP_SERVER_NAME`
+- `DEPENDENCY_TIMEOUT`
+
+### Mailer SMTP
+
+The Kubernetes manifests are configured for Mail.ru SMTP delivery:
+
+- `MAILER_TRANSPORT=smtp`
+- `SMTP_HOST=smtp.mail.ru`
+- `SMTP_PORT=465`
+- `SMTP_TLS_MODE=implicit`
+- `SMTP_SERVER_NAME` only when the TLS certificate name differs from `SMTP_HOST`
+
+SMTP identity and credentials are secret values:
+
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
+
+In Kubernetes, the mailer deployment reads these values from the `mailer-smtp-secrets` Secret. That Secret is intentionally not defined in the Git manifests, so the real mailbox address and SMTP credentials do not need to be committed to the repository.
+
+For an ArgoCD-managed cluster, create or update the live Secret outside the Git-tracked manifests:
+
+```powershell
+kubectl -n default create secret generic mailer-smtp-secrets `
+  --from-literal=SMTP_USERNAME="<your-mailbox@mail.ru>" `
+  --from-literal=SMTP_PASSWORD="<external-app-password>" `
+  --from-literal=SMTP_FROM="Signer <your-mailbox@mail.ru>" `
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+For Mail.ru, use a password for an external application, not the normal mailbox password. ArgoCD will not overwrite this object unless it is added to the application manifests or given ArgoCD tracking labels. Commit only the non-secret SMTP settings in `signer-config`, or use an encrypted secret workflow such as External Secrets, Sealed Secrets, or SOPS if the Secret must be managed through GitOps.
 
 `pdfsigner`:
 
@@ -212,4 +259,4 @@ Kubernetes persistent volume claims:
 - `pdfsigner` exposes `/health` for readiness and liveness probes in Kubernetes.
 - Replace placeholder secret values in `00-secrets-config.yaml` before applying manifests.
 - Keep `02-apps.yaml` pinned to a published immutable tag or digest for ArgoCD syncs.
-- `mailer` currently uses a log transport and logs full message bodies by default for prototype testing.
+- `mailer` supports log transport for prototype testing, but the Kubernetes manifests use Mail.ru SMTP and disable full body logging by default.

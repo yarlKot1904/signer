@@ -18,7 +18,7 @@ spec:
         emptyDir: {}
       containers:
       - name: uploader
-        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-10-6
+        image: ghcr.io/yarlkot1904/signer/uploader:deploy-2026-04-14-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
@@ -108,7 +108,7 @@ spec:
     spec:
       containers:
       - name: downloader
-        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-10-6
+        image: ghcr.io/yarlkot1904/signer/downloader:deploy-2026-04-14-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8081
@@ -191,15 +191,40 @@ spec:
     spec:
       containers:
       - name: mailer
-        image: ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-10-6
+        image: ghcr.io/yarlkot1904/signer/mailer:deploy-2026-04-14-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8083
         env:
         - name: HTTP_PORT
           value: "8083"
+        - name: MAILER_TRANSPORT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: MAILER_TRANSPORT}}
         - name: MAILER_LOG_BODY
           valueFrom: {configMapKeyRef: {name: signer-config, key: MAILER_LOG_BODY}}
+        - name: SMTP_HOST
+          valueFrom: {configMapKeyRef: {name: signer-config, key: SMTP_HOST}}
+        - name: SMTP_PORT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: SMTP_PORT}}
+        - name: SMTP_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mailer-smtp-secrets
+              key: SMTP_USERNAME
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mailer-smtp-secrets
+              key: SMTP_PASSWORD
+        - name: SMTP_FROM
+          valueFrom:
+            secretKeyRef:
+              name: mailer-smtp-secrets
+              key: SMTP_FROM
+        - name: SMTP_TLS_MODE
+          valueFrom: {configMapKeyRef: {name: signer-config, key: SMTP_TLS_MODE}}
+        - name: SMTP_SERVER_NAME
+          valueFrom: {configMapKeyRef: {name: signer-config, key: SMTP_SERVER_NAME}}
         - name: HTTP_READ_HEADER_TIMEOUT
           valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_READ_HEADER_TIMEOUT}}
         - name: HTTP_READ_TIMEOUT
@@ -210,6 +235,8 @@ spec:
           valueFrom: {configMapKeyRef: {name: signer-config, key: HTTP_IDLE_TIMEOUT}}
         - name: SHUTDOWN_TIMEOUT
           valueFrom: {configMapKeyRef: {name: signer-config, key: SHUTDOWN_TIMEOUT}}
+        - name: DEPENDENCY_TIMEOUT
+          valueFrom: {configMapKeyRef: {name: signer-config, key: DEPENDENCY_TIMEOUT}}
         readinessProbe:
           httpGet: {path: /health, port: 8083}
           initialDelaySeconds: 5
@@ -262,7 +289,7 @@ spec:
     spec:
       containers:
       - name: signer
-        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-10-6
+        image: ghcr.io/yarlkot1904/signer/signer:deploy-2026-04-14-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8082
@@ -361,7 +388,7 @@ spec:
     spec:
       containers:
       - name: pdfsigner
-        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-10-6
+        image: ghcr.io/yarlkot1904/signer/pdfsigner:deploy-2026-04-14-1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8090

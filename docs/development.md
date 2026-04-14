@@ -68,12 +68,14 @@ Useful endpoints after startup:
 
 1. Open `http://localhost/`.
 2. Enter an email and upload one PDF.
-3. Check `mailer` logs for the OTP, sign link, download link, and preview link.
-4. `MAILER_LOG_BODY=true` is the default prototype setting for easier end-to-end testing.
+3. Check the recipient mailbox for the OTP, sign link, download link, and preview link.
+4. For log-only prototype testing, set `MAILER_TRANSPORT=log` and `MAILER_LOG_BODY=true`.
 5. Submit the OTP to sign the document.
-6. Check `mailer` logs again for the signed-document download and preview links.
+6. Check the recipient mailbox again for the signed-document download and preview links.
 7. Download the signed PDF through `/download/<token>?signed=1`.
 8. Verify the result through `/api/verify`.
+
+For local Mail.ru delivery, `.env.example` already uses `MAILER_TRANSPORT=smtp`, `SMTP_HOST=smtp.mail.ru`, `SMTP_PORT=465`, and `SMTP_TLS_MODE=implicit`. Set `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM` in the untracked `.env` file before sending mail.
 
 ## Verification Commands
 

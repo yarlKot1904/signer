@@ -25,7 +25,10 @@ func main() {
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	sender := mailer.LogSender{IncludeBody: cfg.MailerLogBody}
+	sender, transport, err := buildSender(cfg)
+	if err != nil {
+		log.Fatal("Mailer transport config error:", err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
@@ -54,9 +57,35 @@ func main() {
 		}
 	}()
 
-	log.Printf("Mailer service started on :%s transport=log bodyLogged=%t", cfg.HTTPPort, cfg.MailerLogBody)
+	log.Printf("Mailer service started on :%s transport=%s bodyLogged=%t", cfg.HTTPPort, transport, cfg.MailerLogBody)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
+	}
+}
+
+func buildSender(cfg *config.Config) (mailer.Sender, string, error) {
+	transport := strings.ToLower(strings.TrimSpace(cfg.MailerTransport))
+	if transport == "" {
+		transport = "log"
+	}
+
+	switch transport {
+	case "log":
+		return mailer.LogSender{IncludeBody: cfg.MailerLogBody}, transport, nil
+	case "smtp":
+		sender, err := mailer.NewSMTPSender(mailer.SMTPConfig{
+			Host:       cfg.SMTPHost,
+			Port:       cfg.SMTPPort,
+			Username:   cfg.SMTPUsername,
+			Password:   cfg.SMTPPassword,
+			From:       cfg.SMTPFrom,
+			TLSMode:    cfg.SMTPTLSMode,
+			ServerName: cfg.SMTPServerName,
+			Timeout:    cfg.DependencyTimeout,
+		})
+		return sender, transport, err
+	default:
+		return nil, "", errors.New("MAILER_TRANSPORT must be log or smtp")
 	}
 }
 
