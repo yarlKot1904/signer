@@ -16,6 +16,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -47,6 +48,7 @@ services:
       - MINIO_BUCKET=docs-storage
       - REDIS_ADDR=redis:6379
       - HTTP_PORT=8080
+      - METRICS_PORT=9100
       - RABBIT_URL=${RABBIT_URL:?set RABBIT_URL}
       - HTTP_READ_HEADER_TIMEOUT=${HTTP_READ_HEADER_TIMEOUT:-5s}
       - HTTP_READ_TIMEOUT=${HTTP_READ_TIMEOUT:-15s}
@@ -68,6 +70,7 @@ services:
       - MINIO_BUCKET=docs-storage
       - REDIS_ADDR=redis:6379
       - HTTP_PORT=8081
+      - METRICS_PORT=9100
       - DB_DSN=${DB_DSN:?set DB_DSN}
       - HTTP_READ_HEADER_TIMEOUT=${HTTP_READ_HEADER_TIMEOUT:-5s}
       - HTTP_READ_TIMEOUT=${HTTP_READ_TIMEOUT:-15s}
@@ -81,6 +84,7 @@ services:
       dockerfile: deploy/docker/mailer.Dockerfile
     environment:
       - HTTP_PORT=8083
+      - METRICS_PORT=9100
       - MAILER_TRANSPORT=${MAILER_TRANSPORT:-smtp}
       - MAILER_LOG_BODY=${MAILER_LOG_BODY:-false}
       - SMTP_HOST=${SMTP_HOST:-smtp.mail.ru}
@@ -114,6 +118,7 @@ services:
       - DB_DSN=${DB_DSN:?set DB_DSN}
       - RABBIT_URL=${RABBIT_URL:?set RABBIT_URL}
       - HTTP_PORT=8082
+      - METRICS_PORT=9100
       - HTTP_READ_HEADER_TIMEOUT=${HTTP_READ_HEADER_TIMEOUT:-5s}
       - HTTP_READ_TIMEOUT=${HTTP_READ_TIMEOUT:-15s}
       - HTTP_WRITE_TIMEOUT=${HTTP_WRITE_TIMEOUT:-120s}
@@ -140,6 +145,8 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBIT_USER:?set RABBIT_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBIT_PASS:?set RABBIT_PASS}
+    volumes:
+      - ./deploy/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
   pdfsigner:
     build:
       context: ./pdfsigner
@@ -148,8 +155,58 @@ services:
       - PDFSIGNER_MAX_FILE_SIZE=${PDFSIGNER_MAX_FILE_SIZE:-10MB}
       - PDFSIGNER_MAX_REQUEST_SIZE=${PDFSIGNER_MAX_REQUEST_SIZE:-11MB}
       - PDFSIGNER_MAX_HEADER_SIZE=${PDFSIGNER_MAX_HEADER_SIZE:-16KB}
+      - PDFSIGNER_MANAGEMENT_PORT=${PDFSIGNER_MANAGEMENT_PORT:-8091}
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    command:
+      - "--redis.addr=redis://redis:6379"
+    depends_on: [redis]
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: ${POSTGRES_EXPORTER_DSN:?set POSTGRES_EXPORTER_DSN}
+    depends_on: [postgres]
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    depends_on:
+      - uploader
+      - downloader
+      - signer
+      - mailer
+      - pdfsigner
+      - redis-exporter
+      - postgres-exporter
+      - rabbitmq
+      - minio
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me}
+    volumes:
+      - ./deploy/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on: [prometheus]
 
 
 volumes:
   minio_data:
   postgres_data:
+  prometheus_data:
+  grafana_data:

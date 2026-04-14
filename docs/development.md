@@ -63,6 +63,8 @@ Useful endpoints after startup:
 - `http://localhost/api/verify`
 - `http://localhost:9001/`
 - `http://localhost:15672/`
+- `http://localhost:9090/`
+- `http://localhost:3000/`
 
 ## Manual End-to-End Scenario
 

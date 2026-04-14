@@ -11,9 +11,11 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/yarlKot1904/signer/internal/config"
 	"github.com/yarlKot1904/signer/internal/mailer"
+	appmetrics "github.com/yarlKot1904/signer/internal/metrics"
 )
 
 func main() {
@@ -24,20 +26,29 @@ func main() {
 
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	appmetrics.StartServer(appCtx, cfg.MetricsPort, "Mailer", cfg.ShutdownTimeout)
 
 	sender, transport, err := buildSender(cfg)
 	if err != nil {
 		log.Fatal("Mailer transport config error:", err)
 	}
+	if cfg.MailerLogBody {
+		appmetrics.MailerLogBodyEnabled.Set(1)
+	}
+	tlsMode := strings.ToLower(strings.TrimSpace(cfg.SMTPTLSMode))
+	if transport == "log" || tlsMode == "" {
+		tlsMode = "none"
+	}
+	appmetrics.MailerTransportInfo.WithLabelValues(transport, tlsMode).Set(1)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
-		handleSendRequest(w, r, sender)
-	})
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/send", appmetrics.InstrumentHandlerFunc("mailer", "/send", func(w http.ResponseWriter, r *http.Request) {
+		handleSendRequest(w, r, sender, transport)
+	}))
+	mux.HandleFunc("/health", appmetrics.InstrumentHandlerFunc("mailer", "/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	}))
 
 	server := &http.Server{
 		Addr:              ":" + cfg.HTTPPort,
@@ -98,14 +109,24 @@ func (e apiError) Error() string {
 	return e.Message
 }
 
-func handleSendRequest(w http.ResponseWriter, r *http.Request, sender mailer.Sender) {
+func handleSendRequest(w http.ResponseWriter, r *http.Request, sender mailer.Sender, transport string) {
+	start := time.Now()
+	template := "unknown"
+	result := "error"
+	defer func() {
+		appmetrics.MailerSendRequests.WithLabelValues(template, transport, result).Inc()
+		appmetrics.MailerSendDuration.WithLabelValues(template, transport, result).Observe(time.Since(start).Seconds())
+	}()
+
 	if r.Method != http.MethodPost {
+		result = "bad_request"
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req mailer.SendRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
+		result = "bad_request"
 		var apiErr apiError
 		if errors.As(err, &apiErr) {
 			writeJSON(w, apiErr.Status, map[string]string{"error": apiErr.Message})
@@ -114,11 +135,20 @@ func handleSendRequest(w http.ResponseWriter, r *http.Request, sender mailer.Sen
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
 		return
 	}
+	template = boundedTemplate(req.Template)
 
+	renderStart := time.Now()
 	msg, err := mailer.Render(req)
+	renderResult := appmetrics.ResultFromErr(err)
+	appmetrics.MailerRenderDuration.WithLabelValues(template, renderResult).Observe(time.Since(renderStart).Seconds())
 	if err != nil {
+		result = "bad_request"
+		appmetrics.MailerRenderFailures.WithLabelValues(template).Inc()
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+	if transport != "smtp" {
+		appmetrics.MailerMessageBytes.WithLabelValues(template, transport).Observe(float64(len(msg.Body)))
 	}
 
 	if err := sender.Send(r.Context(), msg); err != nil {
@@ -127,7 +157,17 @@ func handleSendRequest(w http.ResponseWriter, r *http.Request, sender mailer.Sen
 		return
 	}
 
+	result = "success"
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+func boundedTemplate(template string) string {
+	switch template {
+	case mailer.TemplateSigningOTP, mailer.TemplateSignedDocument:
+		return template
+	default:
+		return "unknown"
+	}
 }
 
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {

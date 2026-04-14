@@ -10,6 +10,7 @@ import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -26,7 +27,7 @@ import java.util.Base64
 import java.util.Date
 
 class PdfSigningServiceTest {
-    private val service = PdfSigningService()
+    private val service = PdfSigningService(SimpleMeterRegistry())
 
     @Test
     fun `verify signed pdf reports valid signature`() {

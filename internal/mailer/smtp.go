@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/yarlKot1904/signer/internal/logutil"
+	appmetrics "github.com/yarlKot1904/signer/internal/metrics"
 )
 
 const (
@@ -54,10 +55,12 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 
 	from, err := mail.ParseAddress(s.cfg.From)
 	if err != nil {
+		appmetrics.MailerInvalidRecipient.WithLabelValues(boundedTemplate(msg.Template)).Inc()
 		return fmt.Errorf("parse SMTP from address: %w", err)
 	}
 	to, err := mail.ParseAddress(msg.Recipient)
 	if err != nil {
+		appmetrics.MailerInvalidRecipient.WithLabelValues(boundedTemplate(msg.Template)).Inc()
 		return fmt.Errorf("parse SMTP recipient address: %w", err)
 	}
 
@@ -65,8 +68,11 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		return err
 	}
+	appmetrics.MailerMessageBytes.WithLabelValues(boundedTemplate(msg.Template), "smtp").Observe(float64(len(rawMessage)))
 
+	connectStart := time.Now()
 	client, err := s.newClient(ctx)
+	appmetrics.MailerSMTPConnectDuration.WithLabelValues(s.cfg.TLSMode, appmetrics.ResultFromErr(err)).Observe(time.Since(connectStart).Seconds())
 	if err != nil {
 		return err
 	}
@@ -74,31 +80,51 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 
 	if s.cfg.Username != "" {
 		auth := smtp.PlainAuth("", s.cfg.Username, s.cfg.Password, s.cfg.ServerName)
-		if err := client.Auth(auth); err != nil {
+		stageStart := time.Now()
+		err := client.Auth(auth)
+		recordSMTPStage("auth", s.cfg.TLSMode, stageStart, err)
+		appmetrics.MailerSMTPAuth.WithLabelValues(appmetrics.ResultFromErr(err)).Inc()
+		if err != nil {
 			return fmt.Errorf("SMTP auth: %w", err)
 		}
 	}
+	stageStart := time.Now()
 	if err := client.Mail(from.Address); err != nil {
+		recordSMTPStage("mail_from", s.cfg.TLSMode, stageStart, err)
 		return fmt.Errorf("SMTP MAIL FROM: %w", err)
 	}
+	recordSMTPStage("mail_from", s.cfg.TLSMode, stageStart, nil)
+
+	stageStart = time.Now()
 	if err := client.Rcpt(to.Address); err != nil {
+		recordSMTPStage("rcpt_to", s.cfg.TLSMode, stageStart, err)
 		return fmt.Errorf("SMTP RCPT TO: %w", err)
 	}
+	recordSMTPStage("rcpt_to", s.cfg.TLSMode, stageStart, nil)
 
+	stageStart = time.Now()
 	writer, err := client.Data()
 	if err != nil {
+		recordSMTPStage("data", s.cfg.TLSMode, stageStart, err)
 		return fmt.Errorf("SMTP DATA: %w", err)
 	}
 	if _, err := writer.Write(rawMessage); err != nil {
 		_ = writer.Close()
+		recordSMTPStage("data", s.cfg.TLSMode, stageStart, err)
 		return fmt.Errorf("write SMTP message: %w", err)
 	}
 	if err := writer.Close(); err != nil {
+		recordSMTPStage("data", s.cfg.TLSMode, stageStart, err)
 		return fmt.Errorf("finish SMTP message: %w", err)
 	}
+	recordSMTPStage("data", s.cfg.TLSMode, stageStart, nil)
+
+	stageStart = time.Now()
 	if err := client.Quit(); err != nil {
+		recordSMTPStage("quit", s.cfg.TLSMode, stageStart, err)
 		return fmt.Errorf("SMTP quit: %w", err)
 	}
+	recordSMTPStage("quit", s.cfg.TLSMode, stageStart, nil)
 
 	log.Printf(
 		"Mailer dispatch: transport=smtp template=%s recipient=%s messageID=%s correlation=%s subject=%q host=%s tlsMode=%s",
@@ -133,6 +159,7 @@ func (s *SMTPSender) newClient(ctx context.Context) (*smtp.Client, error) {
 
 	var conn net.Conn
 	var err error
+	stageStart := time.Now()
 	if s.cfg.TLSMode == SMTPTLSModeImplicit {
 		tlsDialer := tls.Dialer{
 			NetDialer: dialer,
@@ -142,6 +169,7 @@ func (s *SMTPSender) newClient(ctx context.Context) (*smtp.Client, error) {
 	} else {
 		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	}
+	recordSMTPStage("dial", s.cfg.TLSMode, stageStart, err)
 	if err != nil {
 		return nil, fmt.Errorf("dial SMTP %s: %w", addr, err)
 	}
@@ -159,14 +187,34 @@ func (s *SMTPSender) newClient(ctx context.Context) (*smtp.Client, error) {
 		ok, _ := client.Extension("STARTTLS")
 		if !ok {
 			_ = client.Close()
-			return nil, fmt.Errorf("SMTP server %s does not advertise STARTTLS", addr)
+			err := fmt.Errorf("SMTP server %s does not advertise STARTTLS", addr)
+			recordSMTPStage("starttls", s.cfg.TLSMode, time.Now(), err)
+			return nil, err
 		}
+		stageStart = time.Now()
 		if err := client.StartTLS(tlsConfig); err != nil {
 			_ = client.Close()
+			recordSMTPStage("starttls", s.cfg.TLSMode, stageStart, err)
 			return nil, fmt.Errorf("SMTP STARTTLS: %w", err)
 		}
+		recordSMTPStage("starttls", s.cfg.TLSMode, stageStart, nil)
 	}
 	return client, nil
+}
+
+func recordSMTPStage(stage, tlsMode string, start time.Time, err error) {
+	result := appmetrics.ResultFromErr(err)
+	appmetrics.MailerSMTPStageTotal.WithLabelValues(stage, tlsMode, result).Inc()
+	appmetrics.MailerSMTPStageDuration.WithLabelValues(stage, tlsMode, result).Observe(time.Since(start).Seconds())
+}
+
+func boundedTemplate(template string) string {
+	switch template {
+	case TemplateSigningOTP, TemplateSignedDocument:
+		return template
+	default:
+		return "unknown"
+	}
 }
 
 func buildSMTPMessage(from, to *mail.Address, msg Message) ([]byte, error) {

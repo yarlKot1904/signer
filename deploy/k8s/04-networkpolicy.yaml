@@ -17,6 +17,13 @@ spec:
     ports:
     - protocol: TCP
       port: 8090
+  - from:
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 8091
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -37,6 +44,13 @@ spec:
     ports:
     - protocol: TCP
       port: 8083
+  - from:
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 9100
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -60,6 +74,9 @@ spec:
     - podSelector:
         matchLabels:
           app: signer
+    - podSelector:
+        matchLabels:
+          app: redis-exporter
     ports:
     - protocol: TCP
       port: 6379
@@ -83,6 +100,9 @@ spec:
     - podSelector:
         matchLabels:
           app: downloader
+    - podSelector:
+        matchLabels:
+          app: postgres-exporter
     ports:
     - protocol: TCP
       port: 5432
@@ -109,6 +129,13 @@ spec:
     ports:
     - protocol: TCP
       port: 5672
+  - from:
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 15692
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -132,6 +159,9 @@ spec:
     - podSelector:
         matchLabels:
           app: signer
+    - podSelector:
+        matchLabels:
+          app: prometheus
     ports:
     - protocol: TCP
       port: 9000

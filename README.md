@@ -53,6 +53,8 @@ Open:
 - App UI: `http://localhost/`
 - MinIO console: `http://localhost:9001/`
 - RabbitMQ management: `http://localhost:15672/`
+- Prometheus: `http://localhost:9090/`
+- Grafana: `http://localhost:3000/`
 
 Important local defaults:
 

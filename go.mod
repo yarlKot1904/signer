@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.92.0
 	github.com/google/uuid v1.6.0
 	github.com/kelseyhightower/envconfig v1.4.0
+	github.com/prometheus/client_golang v1.19.0
 	github.com/redis/go-redis/v9 v9.17.0
 	github.com/tus/tusd/v2 v2.4.0
 	gorm.io/driver/postgres v1.6.0
@@ -44,7 +45,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/jackc/pgx/v5 v5.8.0 // indirect
-	github.com/prometheus/client_golang v1.19.0 // indirect
 	github.com/prometheus/client_model v0.5.0 // indirect
 	github.com/prometheus/common v0.48.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect

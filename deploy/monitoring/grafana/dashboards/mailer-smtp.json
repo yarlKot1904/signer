@@ -1,0 +1,72 @@
+{
+  "uid": "signer-mailer-smtp",
+  "title": "Signer Mailer SMTP",
+  "tags": ["signer", "mailer"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Mailer Send Requests",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(signer_mailer_send_requests_total[5m])) by (template, transport, result)"}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Mailer Send p95 Latency",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(signer_mailer_send_duration_seconds_bucket[5m])) by (le, template, transport, result))"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "SMTP Stage Failures",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(signer_mailer_smtp_stage_total{result!=\"success\"}[5m])) by (stage, tls_mode, result)"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "SMTP Stage p95 Latency",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum(rate(signer_mailer_smtp_stage_duration_seconds_bucket[5m])) by (le, stage, tls_mode, result))"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Body Logging Enabled",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "signer_mailer_log_body_enabled"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Transport Info",
+      "gridPos": {"h": 6, "w": 18, "x": 6, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "signer_mailer_transport_info"}
+      ]
+    }
+  ]
+}

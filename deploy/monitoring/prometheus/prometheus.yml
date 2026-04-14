@@ -1,0 +1,55 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: uploader
+    static_configs:
+      - targets: ["uploader:9100"]
+        labels:
+          service: uploader
+
+  - job_name: downloader
+    static_configs:
+      - targets: ["downloader:9100"]
+        labels:
+          service: downloader
+
+  - job_name: signer
+    static_configs:
+      - targets: ["signer:9100"]
+        labels:
+          service: signer
+
+  - job_name: mailer
+    static_configs:
+      - targets: ["mailer:9100"]
+        labels:
+          service: mailer
+
+  - job_name: pdfsigner
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["pdfsigner:8091"]
+        labels:
+          service: pdfsigner
+
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: minio
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: ["minio:9000"]

@@ -1,0 +1,311 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: default
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    rule_files:
+      - /etc/prometheus/alerts.yml
+    scrape_configs:
+      - job_name: uploader
+        static_configs:
+          - targets: ["uploader-svc:9100"]
+            labels: {service: uploader}
+      - job_name: downloader
+        static_configs:
+          - targets: ["downloader-svc:9100"]
+            labels: {service: downloader}
+      - job_name: signer
+        static_configs:
+          - targets: ["signer-svc:9100"]
+            labels: {service: signer}
+      - job_name: mailer
+        static_configs:
+          - targets: ["mailer-svc:9100"]
+            labels: {service: mailer}
+      - job_name: pdfsigner
+        metrics_path: /actuator/prometheus
+        static_configs:
+          - targets: ["pdfsigner:8091"]
+            labels: {service: pdfsigner}
+      - job_name: rabbitmq
+        static_configs:
+          - targets: ["rabbitmq:15692"]
+      - job_name: redis
+        static_configs:
+          - targets: ["redis-exporter:9121"]
+      - job_name: postgres
+        static_configs:
+          - targets: ["postgres-exporter:9187"]
+      - job_name: minio
+        metrics_path: /minio/v2/metrics/cluster
+        static_configs:
+          - targets: ["minio:9000"]
+  alerts.yml: |
+    groups:
+      - name: signer-application
+        rules:
+          - alert: SignerAPISignHigh5xxRate
+            expr: sum(rate(signer_http_requests_total{service="signer",route="/api/sign",status_class="5xx"}[10m])) / clamp_min(sum(rate(signer_http_requests_total{service="signer",route="/api/sign"}[10m])), 1) > 0.01
+            for: 10m
+            labels: {severity: warning}
+            annotations:
+              summary: "POST /api/sign 5xx rate is above 1%"
+          - alert: SignerSignP95Slow
+            expr: histogram_quantile(0.95, sum(rate(signer_sign_duration_seconds_bucket[10m])) by (le)) > 30
+            for: 10m
+            labels: {severity: warning}
+            annotations:
+              summary: "p95 signing duration is above 30 seconds"
+          - alert: MailerSendFailures
+            expr: increase(signer_mailer_send_requests_total{result!="success"}[5m]) > 0
+            for: 5m
+            labels: {severity: warning}
+            annotations:
+              summary: "Mailer send failures are increasing"
+          - alert: MailerSMTPAuthFailures
+            expr: increase(signer_mailer_smtp_auth_total{result!="success"}[5m]) > 0
+            for: 5m
+            labels: {severity: warning}
+            annotations:
+              summary: "SMTP authentication failures are increasing"
+          - alert: RabbitMQSignerTasksBacklog
+            expr: rabbitmq_queue_messages_ready{queue="signer.tasks"} > 100
+            for: 15m
+            labels: {severity: warning}
+            annotations:
+              summary: "RabbitMQ signer.tasks backlog is above 100"
+          - alert: VerifyCleanupFailures
+            expr: increase(signer_verify_cleanup_total{result!="success"}[10m]) + increase(signer_verify_upload_cleanup_total{result!="success"}[10m]) > 0
+            for: 10m
+            labels: {severity: warning}
+            annotations:
+              summary: "Verify object cleanup failures are increasing"
+          - alert: SignedLookupMissing
+            expr: increase(signer_signed_lookup_missing_total[10m]) > 0
+            for: 10m
+            labels: {severity: warning}
+            annotations:
+              summary: "Signed-mode downloader lookup is missing signed_s3_key"
+          - alert: PdfSignerVerifyErrors
+            expr: increase(signer_pdfsigner_verify_requests_total{status="error"}[10m]) > 0
+            for: 10m
+            labels: {severity: warning}
+            annotations:
+              summary: "pdfsigner verification errors are increasing"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: default
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: redis-exporter}}
+  template:
+    metadata: {labels: {app: redis-exporter}}
+    spec:
+      containers:
+      - name: redis-exporter
+        image: oliver006/redis_exporter:v1.67.0
+        args: ["--redis.addr=redis://redis:6379"]
+        ports:
+        - containerPort: 9121
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-exporter
+  namespace: default
+spec:
+  selector: {app: redis-exporter}
+  ports:
+  - name: metrics
+    port: 9121
+    targetPort: 9121
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: default
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: postgres-exporter}}
+  template:
+    metadata: {labels: {app: postgres-exporter}}
+    spec:
+      containers:
+      - name: postgres-exporter
+        image: prometheuscommunity/postgres-exporter:v0.15.0
+        ports:
+        - containerPort: 9187
+        env:
+        - name: DATA_SOURCE_NAME
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: POSTGRES_EXPORTER_DSN}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: default
+spec:
+  selector: {app: postgres-exporter}
+  ports:
+  - name: metrics
+    port: 9187
+    targetPort: 9187
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: default
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata: {labels: {app: prometheus}}
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.55.0
+        args:
+        - --config.file=/etc/prometheus/prometheus.yml
+        - --storage.tsdb.path=/prometheus
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - {name: prometheus-config, mountPath: /etc/prometheus/prometheus.yml, subPath: prometheus.yml}
+        - {name: prometheus-config, mountPath: /etc/prometheus/alerts.yml, subPath: alerts.yml}
+        - {name: prometheus-data, mountPath: /prometheus}
+      volumes:
+      - name: prometheus-config
+        configMap: {name: prometheus-config}
+      - name: prometheus-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: default
+spec:
+  selector: {app: prometheus}
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+  namespace: default
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: true
+  dashboards.yml: |
+    apiVersion: 1
+    providers:
+      - name: Signer
+        orgId: 1
+        folder: Signer
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /etc/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: default
+data:
+  overview.json: |
+    {"uid":"signer-overview","title":"Signer Overview","schemaVersion":39,"version":1,"refresh":"15s","time":{"from":"now-1h","to":"now"},"panels":[{"id":1,"type":"timeseries","title":"HTTP Requests","gridPos":{"h":8,"w":12,"x":0,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(rate(signer_http_requests_total[5m])) by (service, status_class)"}]},{"id":2,"type":"timeseries","title":"HTTP p95 Latency","gridPos":{"h":8,"w":12,"x":12,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"histogram_quantile(0.95, sum(rate(signer_http_request_duration_seconds_bucket[5m])) by (le, service, route))"}]}]}
+  signing-flow.json: |
+    {"uid":"signer-signing-flow","title":"Signer Signing Flow","schemaVersion":39,"version":1,"refresh":"15s","time":{"from":"now-1h","to":"now"},"panels":[{"id":1,"type":"timeseries","title":"Sign Requests","gridPos":{"h":8,"w":12,"x":0,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(rate(signer_sign_requests_total[5m])) by (result)"}]},{"id":2,"type":"timeseries","title":"RabbitMQ signer.tasks Backlog","gridPos":{"h":8,"w":12,"x":12,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"rabbitmq_queue_messages_ready{queue=\"signer.tasks\"} + rabbitmq_queue_messages_unacked{queue=\"signer.tasks\"}"}]}]}
+  verification-flow.json: |
+    {"uid":"signer-verification-flow","title":"Signer Verification Flow","schemaVersion":39,"version":1,"refresh":"15s","time":{"from":"now-1h","to":"now"},"panels":[{"id":1,"type":"timeseries","title":"Verification Requests","gridPos":{"h":8,"w":12,"x":0,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(rate(signer_verify_requests_total[5m])) by (mode, status, service_owned)"}]},{"id":2,"type":"timeseries","title":"Verify Cleanup Failures","gridPos":{"h":8,"w":12,"x":12,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(rate(signer_verify_cleanup_total{result!=\"success\"}[5m])) by (target, result)"}]}]}
+  mailer-smtp.json: |
+    {"uid":"signer-mailer-smtp","title":"Signer Mailer SMTP","schemaVersion":39,"version":1,"refresh":"15s","time":{"from":"now-1h","to":"now"},"panels":[{"id":1,"type":"timeseries","title":"Mailer Send Requests","gridPos":{"h":8,"w":12,"x":0,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(rate(signer_mailer_send_requests_total[5m])) by (template, transport, result)"}]},{"id":2,"type":"timeseries","title":"SMTP Stage Failures","gridPos":{"h":8,"w":12,"x":12,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"refId":"A","expr":"sum(rate(signer_mailer_smtp_stage_total{result!=\"success\"}[5m])) by (stage, tls_mode, result)"}]}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: default
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: grafana}}
+  template:
+    metadata: {labels: {app: grafana}}
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:11.3.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_USER
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: GRAFANA_ADMIN_USER}}
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom: {secretKeyRef: {name: signer-secrets, key: GRAFANA_ADMIN_PASSWORD}}
+        volumeMounts:
+        - {name: grafana-provisioning, mountPath: /etc/grafana/provisioning/datasources/datasource.yml, subPath: datasource.yml}
+        - {name: grafana-provisioning, mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml, subPath: dashboards.yml}
+        - {name: grafana-dashboards, mountPath: /etc/grafana/dashboards}
+        - {name: grafana-data, mountPath: /var/lib/grafana}
+      volumes:
+      - name: grafana-provisioning
+        configMap: {name: grafana-provisioning}
+      - name: grafana-dashboards
+        configMap: {name: grafana-dashboards}
+      - name: grafana-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: default
+spec:
+  selector: {app: grafana}
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: "traefik"
+spec:
+  rules:
+  - host: grafana.signer.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana
+            port:
+              number: 3000
