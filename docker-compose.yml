@@ -81,7 +81,16 @@ services:
       dockerfile: deploy/docker/mailer.Dockerfile
     environment:
       - HTTP_PORT=8083
-      - MAILER_LOG_BODY=${MAILER_LOG_BODY:-true}
+      - MAILER_TRANSPORT=${MAILER_TRANSPORT:-smtp}
+      - MAILER_LOG_BODY=${MAILER_LOG_BODY:-false}
+      - SMTP_HOST=${SMTP_HOST:-smtp.mail.ru}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_TLS_MODE=${SMTP_TLS_MODE:-implicit}
+      - SMTP_SERVER_NAME=${SMTP_SERVER_NAME:-}
+      - DEPENDENCY_TIMEOUT=${DEPENDENCY_TIMEOUT:-30s}
       - HTTP_READ_HEADER_TIMEOUT=${HTTP_READ_HEADER_TIMEOUT:-5s}
       - HTTP_READ_TIMEOUT=${HTTP_READ_TIMEOUT:-15s}
       - HTTP_WRITE_TIMEOUT=${HTTP_WRITE_TIMEOUT:-120s}

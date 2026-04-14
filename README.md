@@ -10,6 +10,7 @@ It accepts one PDF upload, issues a temporary token, creates an OTP-backed signi
 - [API](docs/api.md)
 - [Deployment](docs/deployment.md)
 - [Development](docs/development.md)
+- [Metrics](docs/metrics.md)
 - [Verification](docs/verification.md)
 
 ## Services
@@ -17,7 +18,7 @@ It accepts one PDF upload, issues a temporary token, creates an OTP-backed signi
 - `uploader` (Go): static UI, tus upload handling, MinIO storage, Redis token metadata, RabbitMQ task publish
 - `downloader` (Go): download and inline preview by token, with signed-file lookup through PostgreSQL
 - `signer` (Go): RabbitMQ worker plus `/api/*` endpoints for signing and verification
-- `mailer` (Go): internal notification service for OTP and link delivery, currently using a log transport
+- `mailer` (Go): internal notification service for OTP and link delivery, using SMTP when configured and a log transport for prototype testing
 - `pdfsigner` (Kotlin/Spring Boot): PDFBox/BouncyCastle service for signing and verification
 - `gateway` (Nginx, Docker Compose only): reverse proxy for local development
 
@@ -99,7 +100,7 @@ See [docs/api.md](docs/api.md) for request and response details.
 
 These behaviors are intentional in the current prototype:
 
-- OTP delivery is delegated to `mailer`, which currently uses a log transport and logs the rendered message body for prototype testing
+- OTP delivery is delegated to `mailer`, which can send through SMTP and still supports a log transport for prototype testing
 - Certificates are self-signed and not externally trusted
 - Token links are possession-based
 - Redis metadata expires after 24 hours
